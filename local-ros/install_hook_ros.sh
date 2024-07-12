@@ -19,4 +19,4 @@ if ! snapctl is-connected shm-plug; then
 fi
 
 # copy DDS config files to shared folder
-cp -r $SNAP/usr/share/${SNAP_NAME}/config/*.xml ${SNAP_COMMON}/
+cp -r $SNAP/usr/share/husarion-snap-common/config/*.xml ${SNAP_COMMON}/
