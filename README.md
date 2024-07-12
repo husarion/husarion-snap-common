@@ -38,7 +38,7 @@ Add this to `parts`:
 >
 > Optionally you can also add these lines to `snapraft.yaml` to `apps` for running a main `daemon` app (as long as it is named `daemon`):
 > 
-> ```bash
+> ```yaml
 >  start:
 >    command: usr/bin/start_launcher.sh
 >
