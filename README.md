@@ -14,7 +14,7 @@ Add this to `parts`:
   husarion-snap-common:
     plugin: dump
     source: https://github.com/husarion/husarion-snap-common
-    source-branch: "0.2.0"
+    source-branch: "0.3.0"
     source-type: git
     build-environment:
       - YQ_VERSION: "v4.35.1"
