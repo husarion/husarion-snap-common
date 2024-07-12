@@ -34,12 +34,12 @@ Add this to `parts`:
       rm -rf $CRAFT_PRIME/local-ros
 ```
 
-> Optional
+> [!TIP]
 >
-> You can also add these lines to `snapraft.yaml` to `apps` for running a main `daemon` app (as long as it is named `daemon`):
+> Optionally you can also add these lines to `snapraft.yaml` to `apps` for running a main `daemon` app (as long as it is named `daemon`):
 > 
 > ```yaml
->   start:
+>  start:
 >    command: usr/bin/start_launcher.sh
 >
 >  stop:
