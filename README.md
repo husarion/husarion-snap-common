@@ -14,7 +14,7 @@ Add this to `parts`:
   husarion-snap-common:
     plugin: dump
     source: https://github.com/husarion/husarion-snap-common
-    source-branch: "0.1.0"
+    source-branch: "0.2.0"
     source-type: git
     build-environment:
       - YQ_VERSION: "v4.35.1"
@@ -33,6 +33,18 @@ Add this to `parts`:
       chmod +x $CRAFT_PRIME/usr/bin/yq
       rm -rf $CRAFT_PRIME/local-ros
 ```
+
+> Optional
+>
+> You can also add these lines to `snapraft.yaml` to `apps` for running a main `daemon` app (as long as it is named `daemon`):
+> 
+> ```yaml
+>   start:
+>    command: usr/bin/start_launcher.sh
+>
+>  stop:
+>    command: usr/bin/stop_launcher.sh
+> ```
 
 ### `hooks/configure`
 
