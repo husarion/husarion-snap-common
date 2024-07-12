@@ -4,7 +4,11 @@ Common configs for husarion snaps
 
 ## Usage
 
-Add this part to `parts` in `snapcraft.yaml`:
+Add the following lines to the following files in your snap project.
+
+### `snapcraft.yaml`
+
+Add this to `parts`:
 
 ```yaml
   husarion-snap-common:
@@ -28,4 +32,40 @@ Add this part to `parts` in `snapcraft.yaml`:
       cp $CRAFT_PART_BUILD/yq $CRAFT_PRIME/usr/bin/yq
       chmod +x $CRAFT_PRIME/usr/bin/yq
       rm -rf $CRAFT_PRIME/local-ros
+```
+
+### `hooks/configure`
+
+```bash
+#!/bin/bash -e
+
+# The configure hook is called every time one the following actions happen:
+# - initial snap installation
+# - snap refresh
+# - whenever the user runs snap set|unset to change a configuration option
+
+source $SNAP/usr/bin/utils.sh
+
+# your own code
+
+$SNAP/usr/bin/configure_hook_ros.sh
+
+# restart services with new ROS 2 config
+for service in daemon some-other-service-1 some-other-service-2; do
+  if snapctl services ${SNAP_NAME}.${service} | grep -qw enabled; then
+    snapctl restart ${SNAP_NAME}.${service}
+    log "Restarted ${SNAP_NAME}.${service}"
+  fi
+done
+```
+
+### `hooks/install`
+
+```bash
+#!/bin/bash -e
+
+source $SNAP/usr/bin/utils.sh
+$SNAP/usr/bin/install_hook_ros.sh
+
+# your own code
 ```
