@@ -84,10 +84,19 @@ validate_keys() {
     local top_level_key="$1"
     local valid_keys=("${!2}")
 
-    # Get the current configuration keys
-    local config_keys=$(snapctl get "$top_level_key" | yq '. | keys' | sed 's/- //g' | tr -d '"')
+    # Get the current configuration for the top-level key
+    local config=$(snapctl get "$top_level_key")
 
-    if $allow_unset && [ -z "$config_keys" ]; then
+    # Check if the top-level key is set to a non-object value
+    if ! $(echo "$config" | yq 'type == "!!map"'); then
+        log_and_echo "'${top_level_key}' must be an object with valid subkeys. Setting a value directly to '${top_level_key}' is not allowed."
+        exit 1
+    fi
+
+    # Get the current configuration keys
+    local config_keys=$(echo "$config" | yq '. | keys' | sed 's/- //g' | tr -d '"')
+
+    if $allow_unset && ( [ -z "$config_keys" ] || [ "$config_keys" == "[]" ] ); then
         return 0
     fi
 
@@ -109,6 +118,7 @@ validate_keys() {
         fi
     done
 }
+
 
 validate_number() {
     local args=("$@")
@@ -197,7 +207,6 @@ validate_regex() {
 
     local value_key="$1"
     local regex="$2"
-    local error_message="$3"
 
     # Get the value using snapctl
     local value=$(snapctl get "$value_key")
@@ -208,7 +217,7 @@ validate_regex() {
 
     # Check if the value matches the regex
     if ! [[ "$value" =~ $regex ]]; then
-        log_and_echo "'${value}' is not a supported value for '${value_key}'. ${error_message}"
+        log_and_echo "'${value}' is not a supported value for '${value_key}'. It must match the regex pattern: ${regex}"
         exit 1
     fi
 }
@@ -280,7 +289,7 @@ validate_config_param() {
     if ls "${SNAP_COMMON}/" | grep -qE "$regex"; then
         return 0
     else
-        log_and_echo "'${param_value}' is not a valid value for '${param_key}'. It must match the regex pattern ($regex_template) or be one of the hardcoded values: ${hardcoded_values[*]}"
+        log_and_echo "'${param_value}' is not a valid value for '${param_key}'. There is no '${SNAP_COMMON}/$regex' file and is not one of the hardcoded values\n${hardcoded_values[*]}"
         exit 1
     fi
 }
