@@ -21,37 +21,75 @@ is_integer() {
   expr "$1" : '-\?[0-9][0-9]*$' >/dev/null 2>&1
 }
 
+# Function to check for --allow-unset in arguments and remove it
+check_and_remove_allow_unset() {
+    local args=("$@")
+    local allow_unset=false
+
+    for i in "${!args[@]}"; do
+        if [ "${args[$i]}" == "--allow-unset" ]; then
+            allow_unset=true
+            unset 'args[$i]'
+            break
+        fi
+    done
+
+    # Return modified arguments and allow_unset flag
+    echo "${args[@]}"
+    $allow_unset && return 0 || return 1
+}
+
 # Function to validate the option values
 validate_option() {
-  local OPT=$1
-  local VALID_OPTIONS=("${!2}")
+    local args=("$@")
+    local allow_unset=false
 
-  VALUE="$(snapctl get ${OPT})"
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
 
-  # Create an associative array to check valid options
-  declare -A valid_options_map
-  for option in "${VALID_OPTIONS[@]}"; do
-    valid_options_map["$option"]=1
-  done
+    local OPT="$1"
+    local VALID_OPTIONS=("${!2}")
 
-  # Join the valid options with newlines
-  JOINED_OPTIONS=$(printf "%s\n" "${VALID_OPTIONS[@]}")
+    VALUE="$(snapctl get ${OPT})"
 
-  if [ -n "${VALUE}" ]; then
-    if [[ -z "${valid_options_map[$VALUE]}" ]]; then
-      log_and_echo "'${VALUE}' is not a supported value for '${OPT}' parameter. Possible values are:\n${JOINED_OPTIONS}"
-      exit 1
+    if $allow_unset && [ -z "$VALUE" ]; then
+        return 0
     fi
-  fi
+
+    # Create an associative array to check valid options
+    declare -A valid_options_map
+    for option in "${VALID_OPTIONS[@]}"; do
+        valid_options_map["$option"]=1
+    done
+
+    # Join the valid options with newlines
+    JOINED_OPTIONS=$(printf "%s\n" "${VALID_OPTIONS[@]}")
+
+    if [ -n "${VALUE}" ]; then
+        if [[ -z "${valid_options_map[$VALUE]}" ]]; then
+            log_and_echo "'${VALUE}' is not a supported value for '${OPT}' parameter. Possible values are:\n${JOINED_OPTIONS}"
+            exit 1
+        fi
+    fi
 }
 
 # Function to validate configuration keys
 validate_keys() {
-    local top_level_key=$1
+    local args=("$@")
+    local allow_unset=false
+
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
+
+    local top_level_key="$1"
     local valid_keys=("${!2}")
 
     # Get the current configuration keys
     local config_keys=$(snapctl get "$top_level_key" | yq '. | keys' | sed 's/- //g' | tr -d '"')
+
+    if $allow_unset && [ -z "$config_keys" ]; then
+        return 0
+    fi
 
     # Create an associative array to check valid keys
     declare -A valid_keys_map
@@ -73,12 +111,22 @@ validate_keys() {
 }
 
 validate_number() {
-    local value_key=$1
+    local args=("$@")
+    local allow_unset=false
+
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
+
+    local value_key="$1"
     local range=("${!2}")
     local excluded_values=("${!3:-}")
 
     # Get the value using snapctl
     local value=$(snapctl get "$value_key")
+
+    if $allow_unset && [ -z "$value" ]; then
+        return 0
+    fi
 
     # Extract the min and max range values
     local min_value=${range[0]}
@@ -118,10 +166,20 @@ validate_number() {
 }
 
 validate_float() {
-    local value_key=$1
+    local args=("$@")
+    local allow_unset=false
+
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
+
+    local value_key="$1"
 
     # Get the value using snapctl
     local value=$(snapctl get "$value_key")
+
+    if $allow_unset && [ -z "$value" ]; then
+        return 0
+    fi
 
     # Check if the value is a floating-point number
     if ! [[ "$value" =~ ^-?[0-9]*\.?[0-9]+$ ]]; then
@@ -131,12 +189,22 @@ validate_float() {
 }
 
 validate_regex() {
-    local value_key=$1
-    local regex=$2
-    local error_message=$3
+    local args=("$@")
+    local allow_unset=false
+
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
+
+    local value_key="$1"
+    local regex="$2"
+    local error_message="$3"
 
     # Get the value using snapctl
     local value=$(snapctl get "$value_key")
+
+    if $allow_unset && [ -z "$value" ]; then
+        return 0
+    fi
 
     # Check if the value matches the regex
     if ! [[ "$value" =~ $regex ]]; then
@@ -146,24 +214,93 @@ validate_regex() {
 }
 
 validate_path() {
-    local value_key=$1
+    local args=("$@")
+    local allow_unset=false
+
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
+
+    local path_key="$1"
+    local regex="$2"
+    shift 2
+    local valid_options=("$@")
 
     # Get the value using snapctl
-    local config_path=$(snapctl get "$value_key")
+    local config_value=$(snapctl get "$path_key")
 
-    # Check if the path is a valid file
-    if [ ! -f "$config_path" ]; then
-        log_and_echo "The path specified in '$value_key' does not exist: '$config_path'."
+    if $allow_unset && [ -z "$config_value" ]; then
+        return 0
+    fi
+
+    # Check if the value matches any of the valid options
+    for option in "${valid_options[@]}"; do
+        if [ "$config_value" == "$option" ]; then
+            return 0
+        fi
+    done
+
+    # Check if the value matches the regex pattern or is a valid file path
+    if [[ ! "$config_value" =~ $regex ]] && [ ! -f "$config_value" ]; then
+        log_and_echo "'${config_value}' is not a valid value for '${path_key}'. It must match the regex '${regex}', be a valid file path, or be one of the following values: ${valid_options[*]}"
+        exit 1
+    fi
+}
+
+# Universal function to validate configuration parameter based on regex and optional hardcoded values
+validate_config_param() {
+    local args=("$@")
+    local allow_unset=false
+
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
+
+    local param_key="$1"
+    local regex_template="$2"
+    local hardcoded_values=($3) # Expecting this to be a space-separated string of values
+
+    # Get the param-key value using snapctl
+    local param_value=$(snapctl get "$param_key")
+
+    # Check if the param_value is empty
+    if $allow_unset && [ -z "$param_value" ]; then
+        return 0
+    fi
+
+    # Form the regex using the param_value
+    local regex=$(echo "$regex_template" | sed "s/VALUE/${param_value}/g")
+
+    # Check if the param_value matches any of the hardcoded values
+    for value in "${hardcoded_values[@]}"; do
+        if [ "$param_value" == "$value" ]; then
+            return 0
+        fi
+    done
+
+    # Check if the file matching the regex exists in ${SNAP_COMMON}
+    if ls "${SNAP_COMMON}/" | grep -qE "$regex"; then
+        return 0
+    else
+        log_and_echo "'${param_value}' is not a valid value for '${param_key}'. It must match the regex pattern ($regex_template) or be one of the hardcoded values: ${hardcoded_values[*]}"
         exit 1
     fi
 }
 
 validate_ipv4_addr() {
-    local value_key=$1
+    local args=("$@")
+    local allow_unset=false
+
+    # Check for --allow-unset and remove it from arguments
+    set -- $(check_and_remove_allow_unset "${args[@]}") && allow_unset=true
+
+    local value_key="$1"
 
     # Get the value using snapctl
     local ip_address=$(snapctl get "$value_key")
     local ip_address_regex='^(([0-9]{1,3}\.){3}[0-9]{1,3})$'
+
+    if $allow_unset && [ -z "$ip_address" ]; then
+        return 0
+    fi
 
     if [[ "$ip_address" =~ $ip_address_regex ]]; then
         # Split the IP address into its parts
@@ -182,19 +319,6 @@ validate_ipv4_addr() {
     fi
 }
 
-# Universal function to validate serial ports
-validate_serial_port() {
-    local port_key=$1
-
-    # Get the port value using snapctl
-    local port_value=$(snapctl get "$port_key")
-
-    # Check if the value is "auto" or a valid serial port
-    if [ "$port_value" != "auto" ] && [ ! -e "$port_value" ]; then
-        log_and_echo "'${port_value}' is not a valid value for '${port_key}'. It must be 'auto' or a valid serial port in the /dev/ directory."
-        exit 1
-    fi
-}
 
 # Function to find the ttyUSB* device for the specified USB Vendor and Product ID
 find_ttyUSB() {
