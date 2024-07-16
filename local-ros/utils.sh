@@ -296,6 +296,10 @@ validate_config_param() {
     # Form the regex using the param_value
     local regex=$(echo "$regex_template" | sed "s/VALUE/${param_value}/g")
 
+    # Extract the prefix and suffix from the regex template
+    local prefix=$(echo "$regex_template" | sed 's/VALUE.*//')
+    local suffix=$(echo "$regex_template" | sed 's/.*VALUE//')
+
     # Check if the param_value matches any of the hardcoded values
     for value in "${hardcoded_values[@]}"; do
         if [ "$param_value" == "$value" ]; then
@@ -303,11 +307,18 @@ validate_config_param() {
         fi
     done
 
+    # Capture the list of files matching the regex template (excluding the value)
+    local available_files=($(ls "${SNAP_COMMON}/" | grep -E "$(echo "$regex_template" | sed 's/VALUE/.*/g')" | sed -E "s/^${prefix}(.*)${suffix}$/\1/"))
+
+    # Merge hardcoded values and available files into a single list
+    local all_options=("${hardcoded_values[@]}" "${available_files[@]}")
+    local joined_options=$(printf "%s\n" "${all_options[@]}")
+
     # Check if the file matching the regex exists in ${SNAP_COMMON}
     if ls "${SNAP_COMMON}/" | grep -qE "$regex"; then
         return 0
     else
-        log_and_echo "'${param_value}' is not a valid value for '${param_key}'. There is no '${SNAP_COMMON}/$regex' file and it is not one of the hardcoded values\n${hardcoded_values[@]}"
+        log_and_echo "'${param_value}' is not a valid value for '${param_key}'. There is no '${SNAP_COMMON}/$regex'. Available options:\n${joined_options[@]}"
         exit 1
     fi
 }
@@ -349,30 +360,51 @@ validate_ipv4_addr() {
     fi
 }
 
-# Function to find the ttyUSB* device for the specified USB Vendor and Product ID
-find_ttyUSB() {
+# Function to find the ttyUSB* or /dev/video* device for the specified USB Vendor and Product ID
+find_usb_device() {
     local args=("$@")
-    local port_param="${args[0]}"
-    local vendor_id="${args[1]}"
-    local product_id="${args[2]}"
+    local device_type="${args[0]}" # new parameter to specify device type
+    local port_param="${args[1]}"
+    local vendor_id="${args[2]}"
+    local product_id="${args[3]}"
 
-    # Get the serial-port value using snapctl
-    local serial_port=$(snapctl get "$port_param")
+    # Get the serial-port or video-device value using snapctl
+    local device_port=$(snapctl get "$port_param")
 
-    if [ "$serial_port" == "auto" ]; then
+    if [ "$device_port" == "auto" ]; then
         for device in /sys/bus/usb/devices/*; do
             if [ -f "$device/idVendor" ]; then
                 current_vendor_id=$(cat "$device/idVendor")
-                if [ "$current_vendor_id" == "$vendor_id" ];then
+                if [ "$current_vendor_id" == "$vendor_id" ]; then
                     if [ -z "$product_id" ] || ([ -f "$device/idProduct" ] && [ "$(cat "$device/idProduct")" == "$product_id" ]); then
-                        # Look for ttyUSB device in the subdirectories
+                        # Look for specified device type in the subdirectories
                         for subdir in "$device/"*; do
                             if [ -d "$subdir" ]; then
-                                for tty in $(find "$subdir" -name "ttyUSB*" -print 2>/dev/null); do
-                                    if [ -e "$tty" ]; then
-                                        ttydev=$(basename "$tty")
-                                        echo "/dev/$ttydev"
-                                        return 0
+                                if [ "$device_type" == "ttyUSB" ]; then
+                                    search_pattern="ttyUSB[0-9]+"
+                                elif [ "$device_type" == "video" ]; then
+                                    search_pattern="video[0-9]+"
+                                else
+                                    echo "Error: Unknown device type '$device_type'"
+                                    return 1
+                                fi
+
+                                for dev in $(find "$subdir" -regextype posix-egrep -regex ".*/$search_pattern" -print 2>/dev/null); do
+                                    if [ -e "$dev" ]; then
+                                        dev_name=$(basename "$dev")
+                                        dev_path="/dev/$dev_name"
+                                        # Additional validation based on device type
+                                        if [[ "$device_type" == "video" && "$dev_name" =~ ^video[0-9]+$ ]]; then
+                                            # Check if the video device supports video formats
+                                            if v4l2-ctl --list-formats --device "$dev_path" | grep -qE '\[[0-9]\]'; then
+                                                echo "$dev_path"
+                                                return 0
+                                            fi
+                                        elif [[ "$device_type" == "ttyUSB" && "$dev_name" =~ ^ttyUSB[0-9]+$ ]]; then
+                                            # Simple validation for ttyUSB devices
+                                            echo "$dev_path"
+                                            return 0
+                                        fi
                                     fi
                                 done
                             fi
@@ -384,7 +416,12 @@ find_ttyUSB() {
         echo "Error: Device with ID $vendor_id:${product_id:-*} not found."
         return 1
     else
-        echo "$serial_port"
+        echo "$device_port"
         return 0
     fi
 }
+
+
+
+
+
