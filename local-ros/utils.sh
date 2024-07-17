@@ -69,7 +69,7 @@ validate_option() {
 
     if [ -n "${value}" ]; then
         if [[ -z "${valid_options_map[$value]}" ]]; then
-            log_and_echo "'${value}' is not a supported value for '${OPT}' parameter. Possible values are:\n${joined_options}"
+            log_and_echo "'${value}' is not a supported value for '${opt}' parameter. Possible values are:\n${joined_options}"
             exit 1
         fi
     fi
