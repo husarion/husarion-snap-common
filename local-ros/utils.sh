@@ -69,7 +69,7 @@ validate_option() {
 
     if [ -n "${value}" ]; then
         if [[ -z "${valid_options_map[$value]}" ]]; then
-            log_and_echo "'${value}' is not a supported value for '${OPT}' parameter. Possible values are:\n${joined_options}"
+            log_and_echo "'${value}' is not a supported value for '${opt}' parameter. Possible values are:\n${joined_options}"
             exit 1
         fi
     fi
@@ -360,6 +360,125 @@ validate_ipv4_addr() {
     fi
 }
 
+# Function to validate IPv6 addresses
+validate_ipv6_addr() {
+    local input=($(process_args "$@"))
+    local allow_unset="${input[0]}"
+    local args=("${input[@]:1}")
+
+    local value_key="${args[0]}"
+
+    # Get the value using snapctl
+    local ip_address=$(snapctl get "$value_key")
+    local ip_address_regex='^([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4})$'
+
+    if [ -z "$ip_address" ]; then
+        if $allow_unset; then
+            return 0
+        else
+            log_and_echo "'${value_key}' cannot be unset."
+            exit 1
+        fi
+    fi
+
+    if [[ "$ip_address" =~ $ip_address_regex ]]; then
+        return 0
+    else
+        log_and_echo "Invalid format for '$value_key'. Expected format: a valid IPv6 address. Received: '$ip_address'."
+        exit 1
+    fi
+}
+
+# Function to validate hostnames
+validate_hostname() {
+    local input=($(process_args "$@"))
+    local allow_unset="${input[0]}"
+    local args=("${input[@]:1}")
+
+    local value_key="${args[0]}"
+
+    # Get the value using snapctl
+    local hostname=$(snapctl get "$value_key")
+    local hostname_regex='^([a-zA-Z0-9-_]+\.)*[a-zA-Z0-9-_]+\.[a-zA-Z]{2,}$'
+
+    if [ -z "$hostname" ]; then
+        if $allow_unset; then
+            return 0
+        else
+            log_and_echo "'${value_key}' cannot be unset."
+            exit 1
+        fi
+    fi
+
+    if [[ "$hostname" =~ $hostname_regex ]]; then
+        if grep -q "$hostname" /etc/hosts; then
+            return 0
+        else
+            log_and_echo "Hostname '$hostname' not found in /etc/hosts."
+            exit 1
+        fi
+    else
+        log_and_echo "Invalid format for '$value_key'. Expected format: a valid hostname. Received: '$hostname'."
+        exit 1
+    fi
+}
+
+# Function to validate the peers list
+validate_peers_list() {
+    local input=($(process_args "$@"))
+    local allow_unset="${input[0]}"
+    local args=("${input[@]:1}")
+
+    local value_key="${args[0]}"
+
+    # Get the peers list using snapctl
+    local peers_list=$(snapctl get "$value_key")
+
+    # Check if peers list is empty
+    if [ -z "$peers_list" ]; then
+        if $allow_unset; then
+            log_and_echo "Peers list is empty."
+            return 0
+        else
+            log_and_echo "'${value_key}' cannot be unset."
+            exit 1
+        fi
+    fi
+
+    local ip_v4_regex='^(([0-9]{1,3}\.){3}[0-9]{1,3})$'
+    local ip_v6_regex='^([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4})$'
+    local hostname_regex='^[0-9a-z_-]{1,20}$'
+
+    # Split the peers list by semicolon and validate each entry
+    IFS=';' read -ra peers <<< "$peers_list"
+    for peer in "${peers[@]}"; do
+        if [[ "$peer" =~ $ip_v4_regex ]]; then
+            # Validate IPv4 address
+            IFS='.' read -r -a octets <<< "$peer"
+            for octet in "${octets[@]}"; do
+                if ((octet < 0 || octet > 255)); then
+                    log_and_echo "Invalid IPv4 address: '$peer'. Each part must be between 0 and 255."
+                    exit 1
+                fi
+            done
+        elif [[ "$peer" =~ $ip_v6_regex ]]; then
+            # Validate IPv6 address
+            # IPv6 regex already ensures valid format
+            :
+        elif [[ "$peer" =~ $hostname_regex ]]; then
+            # Validate hostname
+            # configure hook needs 'network-bind' interface for that
+            if ! grep -qE "^[^#]*\s+$peer(\s|$)" /etc/hosts; then
+                log_and_echo "Hostname '$peer' not found in /etc/hosts."
+                exit 1
+            fi
+        else
+            log_and_echo "Invalid address: '$peer'. Must be a valid IPv4, IPv6 address or a hostname listed in /etc/hosts."
+            exit 1
+        fi
+    done
+}
+
 # Function to find the ttyUSB* or /dev/video* device for the specified USB Vendor and Product ID
 find_usb_device() {
     local args=("$@")
@@ -421,7 +540,51 @@ find_usb_device() {
     fi
 }
 
+source_ros() {
+    if [ -d "$SNAP/opt/ros/jazzy" ]; then
+        source $SNAP/opt/ros/jazzy/setup.bash 2>/dev/null
+    elif [ -d "$SNAP/opt/ros/humble" ]; then
+        source $SNAP/opt/ros/humble/setup.bash 2>/dev/null
+    else
+        log_and_echo "No compatible ROS 2 distribution found"
+        exit 1
+    fi
+}
 
+# Function to check the type of the provided XML file
+check_xml_profile_type() {
+    local xml_file="$1"
 
+    if [[ ! -f "$xml_file" ]]; then
+        log_and_echo "File '$xml_file' does not exist."
+        return 1
+    fi
 
+    local root_element
+    local namespace
+
+    # Extract the root element
+    root_element=$(yq '. | keys | .[1]' "$xml_file")
+
+    # Extract the namespace based on the root element
+    if [[ "$root_element" == "CycloneDDS" ]]; then
+        namespace=$(yq .CycloneDDS."+@xmlns" "$xml_file")
+    elif [[ "$root_element" == "profiles" ]]; then
+        namespace=$(yq .profiles."+@xmlns" "$xml_file")
+    else
+        namespace="unknown"
+    fi
+
+    # Remove quotes from the extracted values
+    root_element=${root_element//\"/}
+    namespace=${namespace//\"/}
+
+    if [[ "$root_element" == "profiles" ]] && [[ "$namespace" == "http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles" ]]; then
+        echo "rmw_fastrtps_cpp"
+    elif [[ "$root_element" == "CycloneDDS" ]] && [[ "$namespace" == "https://cdds.io/config" ]]; then
+        echo "rmw_cyclonedds_cpp"
+    else
+        exit 1
+    fi
+}
 
