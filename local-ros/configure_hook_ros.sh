@@ -43,7 +43,8 @@ elif [[ $ROS_DISTRO == "jazzy" ]]; then
     echo "ros.automatic-discovery-range=${ROS_AUTOMATIC_DISCOVERY_RANGE}" >> ${ROS_SNAP_ARGS}.tmp
   else
     echo "unset ROS_AUTOMATIC_DISCOVERY_RANGE" >> "${ROS_ENV_FILE}.tmp"
-    echo "ros.automatic-discovery-range!" >> ${ROS_SNAP_ARGS}.tmp
+    echo "ros.automatic-discovery-range=''" >> ${ROS_SNAP_ARGS}.tmp
+    snapctl set ros.automatic-discovery-range=''
   fi
   
   # validate the ROS_STATIC_PEERS
@@ -53,10 +54,11 @@ elif [[ $ROS_DISTRO == "jazzy" ]]; then
 
   if [ -n "$ROS_STATIC_PEERS" ]; then
     echo "export ROS_STATIC_PEERS=${ROS_STATIC_PEERS}" >> "${ROS_ENV_FILE}.tmp"
-    echo "ros.static-peers=${ROS_AUTOMATIC_DISCOVERY_RANGE}" >> ${ROS_SNAP_ARGS}.tmp
+    echo "ros.static-peers=${ROS_STATIC_PEERS}" >> ${ROS_SNAP_ARGS}.tmp
   else
     echo "unset ROS_STATIC_PEERS" >> "${ROS_ENV_FILE}.tmp"
     echo "ros.static-peers=''" >> ${ROS_SNAP_ARGS}.tmp
+    snapctl set ros.static-peers=''
   fi
 
 else
@@ -74,7 +76,8 @@ if [ -n "$ROS_LOCALHOST_ONLY" ]; then
   echo "ros.localhost-only=${ROS_LOCALHOST_ONLY}" >> ${ROS_SNAP_ARGS}.tmp
 else
   echo "unset ROS_LOCALHOST_ONLY" >> "${ROS_ENV_FILE}.tmp"
-  echo "ros.localhost-only!" >> ${ROS_SNAP_ARGS}.tmp
+  echo "ros.localhost-only=''" >> ${ROS_SNAP_ARGS}.tmp
+  snapctl set ros.localhost-only=''
 fi
 
 # Make sure ROS_DOMAIN_ID is valid
@@ -97,7 +100,8 @@ if [ -n "$ROS_NAMESPACE" ]; then
   echo "ros.namespace=${ROS_NAMESPACE}" >> ${ROS_SNAP_ARGS}.tmp
 else
   echo "unset ROS_NAMESPACE" >> "${ROS_ENV_FILE}.tmp"
-  echo "ros.namespace!" >> ${ROS_SNAP_ARGS}.tmp
+  echo "ros.namespace=''" >> ${ROS_SNAP_ARGS}.tmp
+  snapctl set ros.namespace=''
 fi
 
 # Validate the TRANSPORT_SETTING

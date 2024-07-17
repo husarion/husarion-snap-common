@@ -6,10 +6,10 @@ source $SNAP/usr/bin/utils.sh
 source_ros
 
 if [[ $ROS_DISTRO == "humble" ]]; then
-  snapctl set ros.localhost-only=0
+  snapctl set ros.localhost-only=''
 elif [[ $ROS_DISTRO == "jazzy" ]]; then
-  snapctl set ros.automatic-discovery-range="subnet"
-  snapctl set ros.static-peers="" # unset
+  snapctl set ros.automatic-discovery-range="" # unset
+  snapctl set ros.static-peers='' # unset
 fi
 
 snapctl set ros.transport="udp"
