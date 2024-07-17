@@ -54,7 +54,7 @@ elif [[ $ROS_DISTRO == "jazzy" ]]; then
 
   if [ -n "$ROS_STATIC_PEERS" ]; then
     echo "export ROS_STATIC_PEERS=${ROS_STATIC_PEERS}" >> "${ROS_ENV_FILE}.tmp"
-    echo "ros.static-peers=${ROS_STATIC_PEERS}" >> ${ROS_SNAP_ARGS}.tmp
+    echo "ros.static-peers='${ROS_STATIC_PEERS}'" >> ${ROS_SNAP_ARGS}.tmp
   else
     echo "unset ROS_STATIC_PEERS" >> "${ROS_ENV_FILE}.tmp"
     echo "ros.static-peers=''" >> ${ROS_SNAP_ARGS}.tmp

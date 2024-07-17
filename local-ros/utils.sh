@@ -467,13 +467,11 @@ validate_peers_list() {
             :
         elif [[ "$peer" =~ $hostname_regex ]]; then
             # Validate hostname
-            
-            # no access to /etc/hosts from a hook
-            # if ! grep -q "$peer" /etc/hosts; then
-            #     log_and_echo "Hostname '$peer' not found in /etc/hosts."
-            #     exit 1
-            # fi
-            :
+            # configure hook needs 'network-bind' interface for that
+            if ! grep -qE "^[^#]*\s+$peer(\s|$)" /etc/hosts; then
+                log_and_echo "Hostname '$peer' not found in /etc/hosts."
+                exit 1
+            fi
         else
             log_and_echo "Invalid address: '$peer'. Must be a valid IPv4, IPv6 address or a hostname listed in /etc/hosts."
             exit 1
