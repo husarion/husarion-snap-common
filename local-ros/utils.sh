@@ -437,7 +437,6 @@ validate_peers_list() {
     # Check if ROS_STATIC_PEERS is empty
     if [ -z "$ros_static_peers" ]; then
         if $allow_unset; then
-            log_and_echo "ROS_STATIC_PEERS is empty."
             return 0
         else
             log_and_echo "'${value_key}' cannot be unset."
@@ -521,10 +520,8 @@ find_usb_device() {
 source_ros() {
     if [ -d "$SNAP/opt/ros/jazzy" ]; then
         source $SNAP/opt/ros/jazzy/setup.bash
-        echo "Sourced ROS 2 Jazzy"
     elif [ -d "$SNAP/opt/ros/humble" ]; then
         source $SNAP/opt/ros/humble/setup.bash
-        echo "Sourced ROS 2 Humble"
     else
         log_and_echo "No compatible ROS 2 distribution found"
         exit 1
