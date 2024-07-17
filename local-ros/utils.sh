@@ -360,6 +360,103 @@ validate_ipv4_addr() {
     fi
 }
 
+# Function to validate IPv6 addresses
+validate_ipv6_addr() {
+    local input=($(process_args "$@"))
+    local allow_unset="${input[0]}"
+    local args=("${input[@]:1}")
+
+    local value_key="${args[0]}"
+
+    # Get the value using snapctl
+    local ip_address=$(snapctl get "$value_key")
+    local ip_address_regex='^([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4})$'
+
+    if [ -z "$ip_address" ]; then
+        if $allow_unset; then
+            return 0
+        else
+            log_and_echo "'${value_key}' cannot be unset."
+            exit 1
+        fi
+    fi
+
+    if [[ "$ip_address" =~ $ip_address_regex ]]; then
+        return 0
+    else
+        log_and_echo "Invalid format for '$value_key'. Expected format: a valid IPv6 address. Received: '$ip_address'."
+        exit 1
+    fi
+}
+
+# Function to validate hostnames
+validate_hostname() {
+    local input=($(process_args "$@"))
+    local allow_unset="${input[0]}"
+    local args=("${input[@]:1}")
+
+    local value_key="${args[0]}"
+
+    # Get the value using snapctl
+    local hostname=$(snapctl get "$value_key")
+    local hostname_regex='^([a-zA-Z0-9-_]+\.)*[a-zA-Z0-9-_]+\.[a-zA-Z]{2,}$'
+
+    if [ -z "$hostname" ]; then
+        if $allow_unset; then
+            return 0
+        else
+            log_and_echo "'${value_key}' cannot be unset."
+            exit 1
+        fi
+    fi
+
+    if [[ "$hostname" =~ $hostname_regex ]]; then
+        if grep -q "$hostname" /etc/hosts; then
+            return 0
+        else
+            log_and_echo "Hostname '$hostname' not found in /etc/hosts."
+            exit 1
+        fi
+    else
+        log_and_echo "Invalid format for '$value_key'. Expected format: a valid hostname. Received: '$hostname'."
+        exit 1
+    fi
+}
+
+# Function to validate the ROS_STATIC_PEERS parameter
+validate_peers_list() {
+    local input=($(process_args "$@"))
+    local allow_unset="${input[0]}"
+    local args=("${input[@]:1}")
+
+    local value_key="${args[0]}"
+
+    # Get the ROS_STATIC_PEERS value from snapctl
+    local ros_static_peers=$(snapctl get "$value_key")
+
+    # Check if ROS_STATIC_PEERS is empty
+    if [ -z "$ros_static_peers" ]; then
+        if $allow_unset; then
+            log_and_echo "ROS_STATIC_PEERS is empty."
+            return 0
+        else
+            log_and_echo "'${value_key}' cannot be unset."
+            exit 1
+        fi
+    fi
+
+    # Split the ROS_STATIC_PEERS value by semicolon and validate each address
+    IFS=';' read -ra addresses <<< "$ros_static_peers"
+    for address in "${addresses[@]}"; do
+        if ! validate_ipv4_addr --allow-unset "$allow_unset" "$address" && ! validate_ipv6_addr --allow-unset "$allow_unset" "$address" && ! validate_hostname --allow-unset "$allow_unset" "$address"; then
+            log_and_echo "Invalid address: $address"
+            exit 1
+        fi
+    done
+
+    log_and_echo "ROS_STATIC_PEERS is valid."
+}
+
 # Function to find the ttyUSB* or /dev/video* device for the specified USB Vendor and Product ID
 find_usb_device() {
     local args=("$@")
@@ -421,7 +518,53 @@ find_usb_device() {
     fi
 }
 
+source_ros() {
+    if [ -d "$SNAP/opt/ros/jazzy" ]; then
+        source $SNAP/opt/ros/jazzy/setup.bash
+        echo "Sourced ROS 2 Jazzy"
+    elif [ -d "$SNAP/opt/ros/humble" ]; then
+        source $SNAP/opt/ros/humble/setup.bash
+        echo "Sourced ROS 2 Humble"
+    else
+        log_and_echo "No compatible ROS 2 distribution found"
+        exit 1
+    fi
+}
 
+# Function to check the type of the provided XML file
+check_xml_profile_type() {
+    local xml_file="$1"
 
+    if [[ ! -f "$xml_file" ]]; then
+        log_and_echo "File '$xml_file' does not exist."
+        return 1
+    fi
 
+    local root_element
+    local namespace
+
+    # Extract the root element
+    root_element=$(yq '. | keys | .[1]' "$xml_file")
+
+    # Extract the namespace based on the root element
+    if [[ "$root_element" == "CycloneDDS" ]]; then
+        namespace=$(yq .CycloneDDS."+@xmlns" "$xml_file")
+    elif [[ "$root_element" == "profiles" ]]; then
+        namespace=$(yq .profiles."+@xmlns" "$xml_file")
+    else
+        namespace="unknown"
+    fi
+
+    # Remove quotes from the extracted values
+    root_element=${root_element//\"/}
+    namespace=${namespace//\"/}
+
+    if [[ "$root_element" == "profiles" ]] && [[ "$namespace" == "http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles" ]]; then
+        echo "rmw_fastrtps_cpp"
+    elif [[ "$root_element" == "CycloneDDS" ]] && [[ "$namespace" == "https://cdds.io/config" ]]; then
+        echo "rmw_cyclonedds_cpp"
+    else
+        exit 1
+    fi
+}
 
