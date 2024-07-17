@@ -152,11 +152,9 @@ if ! snapctl is-connected ${ROS_PLUG}; then
     exit 1
 fi
 
+mv "${ROS_ENV_FILE}.tmp" "${ROS_ENV_FILE}"
 # Combine all lines into a single line and write to the final file
 tr '\n' ' ' < "${ROS_SNAP_ARGS}.tmp" | sed 's/ $/\n/' > "${ROS_SNAP_ARGS}"
-
-mv "${ROS_ENV_FILE}.tmp" "${ROS_ENV_FILE}"
-mv "${ROS_SNAP_ARGS}.tmp" "${ROS_SNAP_ARGS}"
 
 # Define the path for the manage_ros_env.sh script
 MANAGE_SCRIPT="${SNAP_COMMON}/manage_ros_env.sh"
