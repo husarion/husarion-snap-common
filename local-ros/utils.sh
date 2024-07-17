@@ -423,7 +423,7 @@ validate_hostname() {
     fi
 }
 
-# Function to validate the ROS_STATIC_PEERS parameter
+# Function to validate the peers list
 validate_peers_list() {
     local input=($(process_args "$@"))
     local allow_unset="${input[0]}"
@@ -431,12 +431,13 @@ validate_peers_list() {
 
     local value_key="${args[0]}"
 
-    # Get the ROS_STATIC_PEERS value from snapctl
-    local ros_static_peers=$(snapctl get "$value_key")
+    # Get the peers list using snapctl
+    local peers_list=$(snapctl get "$value_key")
 
-    # Check if ROS_STATIC_PEERS is empty
-    if [ -z "$ros_static_peers" ]; then
+    # Check if peers list is empty
+    if [ -z "$peers_list" ]; then
         if $allow_unset; then
+            log_and_echo "Peers list is empty."
             return 0
         else
             log_and_echo "'${value_key}' cannot be unset."
@@ -444,16 +445,40 @@ validate_peers_list() {
         fi
     fi
 
-    # Split the ROS_STATIC_PEERS value by semicolon and validate each address
-    IFS=';' read -ra addresses <<< "$ros_static_peers"
-    for address in "${addresses[@]}"; do
-        if ! validate_ipv4_addr --allow-unset "$allow_unset" "$address" && ! validate_ipv6_addr --allow-unset "$allow_unset" "$address" && ! validate_hostname --allow-unset "$allow_unset" "$address"; then
-            log_and_echo "Invalid address: $address"
+    local ip_v4_regex='^(([0-9]{1,3}\.){3}[0-9]{1,3})$'
+    local ip_v6_regex='^([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4})$'
+    local hostname_regex='^[0-9a-z_-]{1,20}$'
+
+    # Split the peers list by semicolon and validate each entry
+    IFS=';' read -ra peers <<< "$peers_list"
+    for peer in "${peers[@]}"; do
+        if [[ "$peer" =~ $ip_v4_regex ]]; then
+            # Validate IPv4 address
+            IFS='.' read -r -a octets <<< "$peer"
+            for octet in "${octets[@]}"; do
+                if ((octet < 0 || octet > 255)); then
+                    log_and_echo "Invalid IPv4 address: '$peer'. Each part must be between 0 and 255."
+                    exit 1
+                fi
+            done
+        elif [[ "$peer" =~ $ip_v6_regex ]]; then
+            # Validate IPv6 address
+            # IPv6 regex already ensures valid format
+            :
+        elif [[ "$peer" =~ $hostname_regex ]]; then
+            # Validate hostname
+            
+            # no access to /etc/hosts from a hook
+            # if ! grep -q "$peer" /etc/hosts; then
+            #     log_and_echo "Hostname '$peer' not found in /etc/hosts."
+            #     exit 1
+            # fi
+            :
+        else
+            log_and_echo "Invalid address: '$peer'. Must be a valid IPv4, IPv6 address or a hostname listed in /etc/hosts."
             exit 1
         fi
     done
-
-    log_and_echo "ROS_STATIC_PEERS is valid."
 }
 
 # Function to find the ttyUSB* or /dev/video* device for the specified USB Vendor and Product ID
@@ -519,9 +544,9 @@ find_usb_device() {
 
 source_ros() {
     if [ -d "$SNAP/opt/ros/jazzy" ]; then
-        source $SNAP/opt/ros/jazzy/setup.bash
+        source $SNAP/opt/ros/jazzy/setup.bash 2>/dev/null
     elif [ -d "$SNAP/opt/ros/humble" ]; then
-        source $SNAP/opt/ros/humble/setup.bash
+        source $SNAP/opt/ros/humble/setup.bash 2>/dev/null
     else
         log_and_echo "No compatible ROS 2 distribution found"
         exit 1
