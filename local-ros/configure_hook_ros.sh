@@ -112,7 +112,7 @@ validate_config_param "ros.transport" "dds-config-VALUE.xml" ADDITIONAL_DDS_OPTI
 TRANSPORT_SETTING="$(snapctl get ros.transport)"
 
 if [ "$TRANSPORT_SETTING" = "rmw_fastrtps_cpp" ] || [ "$TRANSPORT_SETTING" = "shm" ]; then
-  if = snapctl is-connected shm-plug; then
+  if ! snapctl is-connected shm-plug; then
     log_and_echo "to use 'rmw_fastrtps_cpp' and 'shm' tranport shm-plug need to be connected, please run:"
     log_and_echo "sudo snap connect ${SNAP_NAME}:shm-plug ${SNAP_NAME}:shm-slot"
     exit 1
@@ -120,7 +120,7 @@ if [ "$TRANSPORT_SETTING" = "rmw_fastrtps_cpp" ] || [ "$TRANSPORT_SETTING" = "sh
 fi
 
 # Check the ros.transport setting and export the appropriate environment variable
-if [ "$TRANSPORT_SETTING" == "rmw_fastrtps_cpp" ] && [ "$TRANSPORT_SETTING" == "rmw_cyclonedds_cpp" ]; then
+if [ "$TRANSPORT_SETTING" != "rmw_fastrtps_cpp" ] && [ "$TRANSPORT_SETTING" != "rmw_cyclonedds_cpp" ]; then
     profile_type=$(check_xml_profile_type "${SNAP_COMMON}/dds-config-${TRANSPORT_SETTING}.xml")
     if [[ "$profile_type" == "rmw_fastrtps_cpp" ]]; then
         echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
@@ -146,7 +146,7 @@ echo "ros.transport=${TRANSPORT_SETTING}" >> ${ROS_SNAP_ARGS}.tmp
 # Make sure ros-humble-ros-base is connected
 ROS_PLUG="ros-${ROS_DISTRO}-ros-base"
 
-if = snapctl is-connected ${ROS_PLUG}; then
+if ! snapctl is-connected ${ROS_PLUG}; then
     log_and_echo "Plug '${ROS_PLUG}' isn't connected. Please run:"
     log_and_echo "snap connect ${SNAP_NAME}:${ROS_PLUG} ${ROS_PLUG}:${ROS_PLUG}"
     exit 1
@@ -161,13 +161,13 @@ MANAGE_SCRIPT="${SNAP_COMMON}/manage_ros_env.sh"
 
 # Create the manage_ros_env.sh script in ${SNAP_COMMON}
 cat << EOF > "${MANAGE_SCRIPT}"
-#=/bin/bash
+#!/bin/bash
 
 ROS_ENV_FILE="${SNAP_COMMON}/ros.env"
 SOURCE_LINE="source \${ROS_ENV_FILE}"
 
 add_source_to_bashrc() {
-  if = grep -Fxq "\$SOURCE_LINE" ~/.bashrc; then
+  if ! grep -Fxq "\$SOURCE_LINE" ~/.bashrc; then
     echo "\$SOURCE_LINE" >> ~/.bashrc
     echo "Added '\$SOURCE_LINE' to ~/.bashrc"
   else
