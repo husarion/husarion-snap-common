@@ -49,7 +49,7 @@ validate_option() {
 
     local value="$(snapctl get ${opt})"
 
-    if [ -z "$value" ]; then
+    if [ -z "$value" ] || [ "$value" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -96,7 +96,7 @@ validate_keys() {
     # Get the current configuration keys
     local config_keys=$(echo "$config" | yq '. | keys' | sed 's/- //g' | tr -d '"')
 
-    if [ -z "$config_keys" ] || [ "$config_keys" == "[]" ]; then
+    if [ -z "$config_keys" ] || [ "$config_keys" == "[]" ] || [ "$value" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -136,7 +136,7 @@ validate_number() {
     # Get the value using snapctl
     local value=$(snapctl get "$value_key")
 
-    if [ -z "$value" ]; then
+    if [ -z "$value" ] || [ "$value" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -192,7 +192,7 @@ validate_float() {
     # Get the value using snapctl
     local value=$(snapctl get "$value_key")
 
-    if [ -z "$value" ]; then
+    if [ -z "$value" ] || [ "$value" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -219,7 +219,7 @@ validate_regex() {
     # Get the value using snapctl
     local value=$(snapctl get "$value_key")
 
-    if [ -z "$value" ]; then
+    if [ -z "$value" ] || [ "$value" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -247,7 +247,7 @@ validate_path() {
     # Get the value using snapctl
     local config_value=$(snapctl get "$path_key")
 
-    if [ -z "$config_value" ]; then
+    if [ -z "$config_value" ] || [ "$config_value" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -284,7 +284,7 @@ validate_config_param() {
     local param_value=$(snapctl get "$param_key")
 
     # Check if the param_value is empty
-    if [ -z "$param_value" ]; then
+    if [ -z "$param_value" ] || [ "$param_value" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -334,7 +334,7 @@ validate_ipv4_addr() {
     local ip_address=$(snapctl get "$value_key")
     local ip_address_regex='^(([0-9]{1,3}\.){3}[0-9]{1,3})$'
 
-    if [ -z "$ip_address" ]; then
+    if [ -z "$ip_address" ] || [ "$ip_address" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -372,7 +372,7 @@ validate_ipv6_addr() {
     local ip_address=$(snapctl get "$value_key")
     local ip_address_regex='^([0-9a-fA-F]{1,4}:){7}([0-9a-fA-F]{1,4})$'
 
-    if [ -z "$ip_address" ]; then
+    if [ -z "$ip_address" ] || [ "$ip_address" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -401,7 +401,7 @@ validate_hostname() {
     local hostname=$(snapctl get "$value_key")
     local hostname_regex='^([a-zA-Z0-9-_]+\.)*[a-zA-Z0-9-_]+\.[a-zA-Z]{2,}$'
 
-    if [ -z "$hostname" ]; then
+    if [ -z "$hostname" ] || [ "$hostname" == "''" ]; then
         if $allow_unset; then
             return 0
         else
@@ -435,7 +435,7 @@ validate_peers_list() {
     local peers_list=$(snapctl get "$value_key")
 
     # Check if peers list is empty
-    if [ -z "$peers_list" ]; then
+    if [ -z "$peers_list" ] || [ "$peers_list" == "''" ]; then
         if $allow_unset; then
             log_and_echo "Peers list is empty."
             return 0
