@@ -104,41 +104,204 @@ else
   snapctl set ros.namespace=''
 fi
 
-# Validate the TRANSPORT_SETTING
-ADDITIONAL_DDS_OPTIONS=("rmw_fastrtps_cpp" "rmw_cyclonedds_cpp")
-
-validate_config_param "ros.transport" "dds-config-VALUE.xml" ADDITIONAL_DDS_OPTIONS[@]
-
 TRANSPORT_SETTING="$(snapctl get ros.transport)"
 
-if [ "$TRANSPORT_SETTING" = "rmw_fastrtps_cpp" ] || [ "$TRANSPORT_SETTING" = "shm" ]; then
+# -----------------------------------------------------------------
+# Token grammar — `ros.transport=<token>` accepts:
+#
+#   LEGACY (back-compat aliases — map to new layout):
+#     udp             → fastdds/udp.xml
+#     shm             → fastdds/shm.xml
+#     udp-lo          → fastdds/udp-lo.xml
+#     udp-lo-cyclone  → cyclonedds/udp-lo.xml
+#     rmw_fastrtps_cpp  → FastDDS, no profile XML (library default)
+#     rmw_cyclonedds_cpp → CycloneDDS, no profile XML
+#
+#   NEW (since 0.6.0):
+#     rmw_zenoh_cpp   → Zenoh, default session config
+#     zenoh           → alias for rmw_zenoh_cpp
+#     fastdds/<X>     → ${SNAP_COMMON}/rmw/fastdds/<X>.xml
+#     cyclonedds/<X>  → ${SNAP_COMMON}/rmw/cyclonedds/<X>.xml
+#     zenoh/<X>       → ${SNAP_COMMON}/rmw/zenoh/<X>.json5
+#
+#   FALLBACK (back-compat for operator-uploaded files):
+#     <X>             → if ${SNAP_COMMON}/dds-config-<X>.xml exists
+#                       (legacy flat path; check_xml_profile_type
+#                       dispatches FastDDS vs Cyclone by content)
+#
+# Resolved into three variables consumed below:
+#   RMW_IMPL  — rmw_fastrtps_cpp / rmw_cyclonedds_cpp / rmw_zenoh_cpp
+#   PROFILE   — absolute filesystem path, or empty for "use library
+#               default"
+#   PROFILE_KIND — fastdds / cyclonedds / zenoh (for env-var routing)
+
+RMW_IMPL=""
+PROFILE=""
+PROFILE_KIND=""
+
+list_available() {
+    log_and_echo "Available tokens:"
+    log_and_echo "  rmw_fastrtps_cpp, rmw_cyclonedds_cpp, rmw_zenoh_cpp, zenoh"
+    for sub in fastdds cyclonedds zenoh; do
+        local dir="${SNAP_COMMON}/rmw/${sub}"
+        [ -d "$dir" ] || continue
+        local ext=".xml"
+        [ "$sub" = "zenoh" ] && ext=".json5"
+        for f in "$dir"/*"$ext"; do
+            [ -f "$f" ] || continue
+            local name; name=$(basename "$f" "$ext")
+            log_and_echo "  ${sub}/${name}"
+        done
+    done
+    log_and_echo "Legacy aliases (still accepted): udp, shm, udp-lo, udp-lo-cyclone"
+}
+
+case "$TRANSPORT_SETTING" in
+    # --- RMW-only tokens (no profile file) ---
+    rmw_fastrtps_cpp)
+        RMW_IMPL="rmw_fastrtps_cpp"
+        PROFILE_KIND="fastdds"
+        ;;
+    rmw_cyclonedds_cpp)
+        RMW_IMPL="rmw_cyclonedds_cpp"
+        PROFILE_KIND="cyclonedds"
+        ;;
+    rmw_zenoh_cpp|zenoh)
+        RMW_IMPL="rmw_zenoh_cpp"
+        PROFILE_KIND="zenoh"
+        ;;
+    # --- New canonical: <kind>/<name> ---
+    fastdds/*)
+        RMW_IMPL="rmw_fastrtps_cpp"
+        PROFILE_KIND="fastdds"
+        PROFILE="${SNAP_COMMON}/rmw/fastdds/${TRANSPORT_SETTING#fastdds/}.xml"
+        ;;
+    cyclonedds/*)
+        RMW_IMPL="rmw_cyclonedds_cpp"
+        PROFILE_KIND="cyclonedds"
+        PROFILE="${SNAP_COMMON}/rmw/cyclonedds/${TRANSPORT_SETTING#cyclonedds/}.xml"
+        ;;
+    zenoh/*)
+        RMW_IMPL="rmw_zenoh_cpp"
+        PROFILE_KIND="zenoh"
+        PROFILE="${SNAP_COMMON}/rmw/zenoh/${TRANSPORT_SETTING#zenoh/}.json5"
+        ;;
+    # --- Legacy short tokens (FastDDS) ---
+    udp)
+        RMW_IMPL="rmw_fastrtps_cpp"
+        PROFILE_KIND="fastdds"
+        PROFILE="${SNAP_COMMON}/rmw/fastdds/udp.xml"
+        ;;
+    shm)
+        RMW_IMPL="rmw_fastrtps_cpp"
+        PROFILE_KIND="fastdds"
+        PROFILE="${SNAP_COMMON}/rmw/fastdds/shm.xml"
+        ;;
+    udp-lo)
+        RMW_IMPL="rmw_fastrtps_cpp"
+        PROFILE_KIND="fastdds"
+        PROFILE="${SNAP_COMMON}/rmw/fastdds/udp-lo.xml"
+        ;;
+    # --- Legacy short token (Cyclone) ---
+    udp-lo-cyclone)
+        RMW_IMPL="rmw_cyclonedds_cpp"
+        PROFILE_KIND="cyclonedds"
+        PROFILE="${SNAP_COMMON}/rmw/cyclonedds/udp-lo.xml"
+        ;;
+    # --- Fallback: operator-uploaded files at the legacy flat
+    #     path (dds-config-<X>.xml). Auto-detect FastDDS vs Cyclone
+    #     by XML content. Kept so the rosbot snap doesn't break
+    #     installations that pre-date the rmw/ refactor.
+    *)
+        legacy_path="${SNAP_COMMON}/dds-config-${TRANSPORT_SETTING}.xml"
+        if [ -f "$legacy_path" ] || [ -L "$legacy_path" ]; then
+            profile_type=$(check_xml_profile_type "$legacy_path")
+            case "$profile_type" in
+                rmw_fastrtps_cpp)
+                    RMW_IMPL="rmw_fastrtps_cpp"
+                    PROFILE_KIND="fastdds"
+                    PROFILE="$legacy_path"
+                    ;;
+                rmw_cyclonedds_cpp)
+                    RMW_IMPL="rmw_cyclonedds_cpp"
+                    PROFILE_KIND="cyclonedds"
+                    PROFILE="$legacy_path"
+                    ;;
+                *)
+                    log_and_echo "'${TRANSPORT_SETTING}' resolves to $legacy_path but the XML profile type couldn't be detected."
+                    exit 1
+                    ;;
+            esac
+        else
+            log_and_echo "'${TRANSPORT_SETTING}' is not a valid value for 'ros.transport'."
+            list_available
+            exit 1
+        fi
+        ;;
+esac
+
+# Profile file existence check (skip when there's no profile, i.e.
+# the rmw_<X>_cpp / zenoh "use library defaults" tokens).
+if [ -n "$PROFILE" ] && [ ! -e "$PROFILE" ]; then
+    log_and_echo "'${TRANSPORT_SETTING}' resolves to '${PROFILE}' which doesn't exist."
+    list_available
+    exit 1
+fi
+
+# SHM plug check — FastDDS SHM transport (also kicks in for the
+# 'shm' legacy alias). Other FastDDS profiles use UDP; the SHM
+# plug isn't required.
+if [ "$TRANSPORT_SETTING" = "rmw_fastrtps_cpp" ] || [ "$TRANSPORT_SETTING" = "shm" ] || [ "$TRANSPORT_SETTING" = "fastdds/shm" ]; then
   if ! snapctl is-connected shm-plug; then
-    log_and_echo "to use 'rmw_fastrtps_cpp' and 'shm' tranport shm-plug need to be connected, please run:"
+    log_and_echo "to use 'rmw_fastrtps_cpp' and 'shm' transport shm-plug need to be connected, please run:"
     log_and_echo "sudo snap connect ${SNAP_NAME}:shm-plug ${SNAP_NAME}:shm-slot"
     exit 1
   fi
 fi
 
-# Check the ros.transport setting and export the appropriate environment variable
-if [ "$TRANSPORT_SETTING" != "rmw_fastrtps_cpp" ] && [ "$TRANSPORT_SETTING" != "rmw_cyclonedds_cpp" ]; then
-    profile_type=$(check_xml_profile_type "${SNAP_COMMON}/dds-config-${TRANSPORT_SETTING}.xml")
-    if [[ "$profile_type" == "rmw_fastrtps_cpp" ]]; then
+# ---- Emit the env vars --------------------------------------------------
+#
+# Always unset the env vars OTHER than the one we're about to set,
+# so the daemon doesn't see stale config from a previous transport.
+echo "export RMW_IMPLEMENTATION=${RMW_IMPL}" >> "${ROS_ENV_FILE}.tmp"
+case "$PROFILE_KIND" in
+    fastdds)
         echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "export RMW_IMPLEMENTATION=${profile_type}" >> "${ROS_ENV_FILE}.tmp"
-        echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${SNAP_COMMON}/dds-config-${TRANSPORT_SETTING}.xml" >> "${ROS_ENV_FILE}.tmp"
-    elif [[ "$profile_type" == "rmw_cyclonedds_cpp" ]]; then
+        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
+        if [ -n "$PROFILE" ]; then
+            echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
+        else
+            echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
+        fi
+        ;;
+    cyclonedds)
         echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
-        echo "export RMW_IMPLEMENTATION=${profile_type}" >> "${ROS_ENV_FILE}.tmp"
-        echo "export CYCLONEDDS_URI=file://${SNAP_COMMON}/dds-config-${TRANSPORT_SETTING}.xml" >> "${ROS_ENV_FILE}.tmp"
-    else
-        log_and_echo "'${TRANSPORT_SETTING}' error: The transport setting is not valid."
-        exit 1
-    fi
-elif [ "$TRANSPORT_SETTING" == "rmw_fastrtps_cpp" ] || [ "$TRANSPORT_SETTING" == "rmw_cyclonedds_cpp" ]; then
-  echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
-  echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
-  echo "export RMW_IMPLEMENTATION=${TRANSPORT_SETTING}" >> "${ROS_ENV_FILE}.tmp"
-fi
+        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
+        if [ -n "$PROFILE" ]; then
+            echo "export CYCLONEDDS_URI=file://${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
+        else
+            echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
+        fi
+        ;;
+    zenoh)
+        echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
+        if [ -n "$PROFILE" ]; then
+            echo "export ZENOH_SESSION_CONFIG_URI=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
+        else
+            echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        fi
+        # rmw_zenoh's peer mode default-connects to tcp/localhost:7447
+        # and warn-loops when no router is up. Set ATTEMPTS=0 so the
+        # peer doesn't block waiting. Operators who run the snap's
+        # zenoh-router daemon get the speedup automatically; everyone
+        # else still talks zenoh peer-to-peer (slower for inter-host
+        # traffic but functional).
+        echo "export ZENOH_ROUTER_CHECK_ATTEMPTS=0" >> "${ROS_ENV_FILE}.tmp"
+        ;;
+esac
 
 echo "ros.transport=${TRANSPORT_SETTING}" >> ${ROS_SNAP_ARGS}.tmp
 
