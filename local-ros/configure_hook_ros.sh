@@ -117,12 +117,9 @@ TRANSPORT_SETTING="$(snapctl get ros.transport)"
 #     rmw_fastrtps_cpp  → FastDDS, no profile XML (library default)
 #     rmw_cyclonedds_cpp → CycloneDDS, no profile XML
 #
-#   NEW (since 0.6.0):
-#     rmw_zenoh_cpp   → Zenoh, default session config
-#     zenoh           → alias for rmw_zenoh_cpp
+#   CANONICAL (since 0.6.0):
 #     fastdds/<X>     → ${SNAP_COMMON}/rmw/fastdds/<X>.xml
 #     cyclonedds/<X>  → ${SNAP_COMMON}/rmw/cyclonedds/<X>.xml
-#     zenoh/<X>       → ${SNAP_COMMON}/rmw/zenoh/<X>.json5
 #
 #   FALLBACK (back-compat for operator-uploaded files):
 #     <X>             → if ${SNAP_COMMON}/dds-config-<X>.xml exists
@@ -130,10 +127,18 @@ TRANSPORT_SETTING="$(snapctl get ros.transport)"
 #                       dispatches FastDDS vs Cyclone by content)
 #
 # Resolved into three variables consumed below:
-#   RMW_IMPL  — rmw_fastrtps_cpp / rmw_cyclonedds_cpp / rmw_zenoh_cpp
+#   RMW_IMPL  — rmw_fastrtps_cpp / rmw_cyclonedds_cpp
 #   PROFILE   — absolute filesystem path, or empty for "use library
 #               default"
-#   PROFILE_KIND — fastdds / cyclonedds / zenoh (for env-var routing)
+#   PROFILE_KIND — fastdds / cyclonedds (for env-var routing)
+#
+# Zenoh (`rmw_zenoh_cpp`, `zenoh`, `zenoh/<X>`) is REJECTED — see the
+# block below the case statement. The factory configs under
+# ${SNAP_COMMON}/rmw/zenoh{,-router}/ are kept as dormant data; the
+# block can be flipped back on with a one-line revert once
+# micro_ros_agent ships with dynamic RMW loading (currently statically
+# linked to FastDDS, so its motor-feedback topics never reach
+# rmw_zenoh_cpp subscribers).
 
 RMW_IMPL=""
 PROFILE=""
@@ -141,20 +146,33 @@ PROFILE_KIND=""
 
 list_available() {
     log_and_echo "Available tokens:"
-    log_and_echo "  rmw_fastrtps_cpp, rmw_cyclonedds_cpp, rmw_zenoh_cpp, zenoh"
-    for sub in fastdds cyclonedds zenoh; do
+    log_and_echo "  rmw_fastrtps_cpp, rmw_cyclonedds_cpp"
+    for sub in fastdds cyclonedds; do
         local dir="${SNAP_COMMON}/rmw/${sub}"
         [ -d "$dir" ] || continue
-        local ext=".xml"
-        [ "$sub" = "zenoh" ] && ext=".json5"
-        for f in "$dir"/*"$ext"; do
+        for f in "$dir"/*.xml; do
             [ -f "$f" ] || continue
-            local name; name=$(basename "$f" "$ext")
+            local name; name=$(basename "$f" ".xml")
             log_and_echo "  ${sub}/${name}"
         done
     done
     log_and_echo "Legacy aliases (still accepted): udp, shm, udp-lo, udp-lo-cyclone"
 }
+
+# Zenoh is currently blocked at the validator level. Re-enable by
+# moving these patterns back into the case statement below and
+# restoring the `zenoh)` env-emission arm further down.
+case "$TRANSPORT_SETTING" in
+    rmw_zenoh_cpp|zenoh|zenoh/*)
+        log_and_echo "'${TRANSPORT_SETTING}' (zenoh) is not currently supported by the rosbot snap."
+        log_and_echo "Reason: micro_ros_agent is statically linked to FastDDS and cannot publish"
+        log_and_echo "  motor-feedback topics into the rmw_zenoh_cpp graph. Activation of the"
+        log_and_echo "  ros2_control hardware interface times out and the driver enters a death loop."
+        log_and_echo "Workaround: use a FastDDS transport (udp / shm / udp-lo / fastdds/<X>) or Cyclone."
+        list_available
+        exit 1
+        ;;
+esac
 
 case "$TRANSPORT_SETTING" in
     # --- RMW-only tokens (no profile file) ---
@@ -166,10 +184,6 @@ case "$TRANSPORT_SETTING" in
         RMW_IMPL="rmw_cyclonedds_cpp"
         PROFILE_KIND="cyclonedds"
         ;;
-    rmw_zenoh_cpp|zenoh)
-        RMW_IMPL="rmw_zenoh_cpp"
-        PROFILE_KIND="zenoh"
-        ;;
     # --- New canonical: <kind>/<name> ---
     fastdds/*)
         RMW_IMPL="rmw_fastrtps_cpp"
@@ -180,11 +194,6 @@ case "$TRANSPORT_SETTING" in
         RMW_IMPL="rmw_cyclonedds_cpp"
         PROFILE_KIND="cyclonedds"
         PROFILE="${SNAP_COMMON}/rmw/cyclonedds/${TRANSPORT_SETTING#cyclonedds/}.xml"
-        ;;
-    zenoh/*)
-        RMW_IMPL="rmw_zenoh_cpp"
-        PROFILE_KIND="zenoh"
-        PROFILE="${SNAP_COMMON}/rmw/zenoh/${TRANSPORT_SETTING#zenoh/}.json5"
         ;;
     # --- Legacy short tokens (FastDDS) ---
     udp)
@@ -267,8 +276,6 @@ echo "export RMW_IMPLEMENTATION=${RMW_IMPL}" >> "${ROS_ENV_FILE}.tmp"
 case "$PROFILE_KIND" in
     fastdds)
         echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
         if [ -n "$PROFILE" ]; then
             echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
         else
@@ -277,31 +284,18 @@ case "$PROFILE_KIND" in
         ;;
     cyclonedds)
         echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
         if [ -n "$PROFILE" ]; then
             echo "export CYCLONEDDS_URI=file://${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
         else
             echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
         fi
         ;;
-    zenoh)
-        echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
-        if [ -n "$PROFILE" ]; then
-            echo "export ZENOH_SESSION_CONFIG_URI=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
-        else
-            echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-        fi
-        # rmw_zenoh's peer mode default-connects to tcp/localhost:7447
-        # and warn-loops when no router is up. Set ATTEMPTS=0 so the
-        # peer doesn't block waiting. Operators who run the snap's
-        # zenoh-router daemon get the speedup automatically; everyone
-        # else still talks zenoh peer-to-peer (slower for inter-host
-        # traffic but functional).
-        echo "export ZENOH_ROUTER_CHECK_ATTEMPTS=0" >> "${ROS_ENV_FILE}.tmp"
-        ;;
 esac
+
+# Always unset the zenoh env vars so a previous zenoh transport (now
+# rejected by the validator above) doesn't leave stale env behind.
+echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
 
 echo "ros.transport=${TRANSPORT_SETTING}" >> ${ROS_SNAP_ARGS}.tmp
 

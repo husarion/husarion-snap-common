@@ -33,12 +33,19 @@ snapctl set ros.namespace="" # unset
 #   ${SNAP_COMMON}/rmw/
 #       fastdds/{udp,shm,udp-lo}.xml
 #       cyclonedds/udp-lo.xml
-#       zenoh/{default,shm}.json5
-#       zenoh-router/{default,shm}-router.json5
+#       zenoh/{default,shm}.json5            (dormant)
+#       zenoh-router/{default,shm}-router.json5  (dormant)
 #
 # The configure-hook reads from this layout. Tokens passed to
 # `ros.transport=…` resolve to file paths under here (see
 # configure_hook_ros.sh's case statement).
+#
+# Zenoh subdirs are populated but DORMANT: the configure-hook
+# currently rejects `ros.transport=zenoh*` tokens because
+# micro_ros_agent (in the rosbot snap) is statically linked to
+# FastDDS and motor-feedback never reaches rmw_zenoh_cpp subscribers.
+# We keep the factory configs in place so the re-enable, once
+# upstream lands a fix, is a one-line revert in configure_hook_ros.sh.
 SRC="${SNAP}/usr/share/husarion-snap-common/config/rmw"
 DST="${SNAP_COMMON}/rmw"
 mkdir -p "${DST}/fastdds" "${DST}/cyclonedds" "${DST}/zenoh" "${DST}/zenoh-router"
