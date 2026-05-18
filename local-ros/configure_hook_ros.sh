@@ -147,6 +147,9 @@ PROFILE_KIND=""
 list_available() {
     log_and_echo "Available tokens:"
     log_and_echo "  rmw_fastrtps_cpp, rmw_cyclonedds_cpp"
+    if [ "${HSC_ALLOW_ZENOH:-0}" = "1" ]; then
+        log_and_echo "  rmw_zenoh_cpp, zenoh/<config-name>"
+    fi
     for sub in fastdds cyclonedds; do
         local dir="${SNAP_COMMON}/rmw/${sub}"
         [ -d "$dir" ] || continue
@@ -156,23 +159,39 @@ list_available() {
             log_and_echo "  ${sub}/${name}"
         done
     done
+    if [ "${HSC_ALLOW_ZENOH:-0}" = "1" ]; then
+        local zdir="${SNAP_COMMON}/rmw/zenoh"
+        if [ -d "$zdir" ]; then
+            for f in "$zdir"/*.json5; do
+                [ -f "$f" ] || continue
+                local name; name=$(basename "$f" ".json5")
+                log_and_echo "  zenoh/${name}"
+            done
+        fi
+    fi
     log_and_echo "Legacy aliases (still accepted): udp, shm, udp-lo, udp-lo-cyclone"
 }
 
-# Zenoh is currently blocked at the validator level. Re-enable by
-# moving these patterns back into the case statement below and
-# restoring the `zenoh)` env-emission arm further down.
-case "$TRANSPORT_SETTING" in
-    rmw_zenoh_cpp|zenoh|zenoh/*)
-        log_and_echo "'${TRANSPORT_SETTING}' (zenoh) is not currently supported by the rosbot snap."
-        log_and_echo "Reason: micro_ros_agent is statically linked to FastDDS and cannot publish"
-        log_and_echo "  motor-feedback topics into the rmw_zenoh_cpp graph. Activation of the"
-        log_and_echo "  ros2_control hardware interface times out and the driver enters a death loop."
-        log_and_echo "Workaround: use a FastDDS transport (udp / shm / udp-lo / fastdds/<X>) or Cyclone."
-        list_available
-        exit 1
-        ;;
-esac
+# Zenoh is gated behind HSC_ALLOW_ZENOH=1. Snaps that pair zenoh-aware
+# rclcpp nodes with a non-zenoh-aware bridge (e.g. micro_ros_agent, which
+# is statically linked to FastDDS) MUST leave this unset — otherwise the
+# bridge publishes motor-feedback into a graph the rosbot driver can't
+# see and ros2_control activation times out in a death loop. Snaps where
+# the bridge is itself rclcpp-based (e.g. rosbot_mavlink_bridge) can opt
+# in by exporting HSC_ALLOW_ZENOH=1 from their configure_hook before
+# sourcing this file.
+if [ "${HSC_ALLOW_ZENOH:-0}" != "1" ]; then
+    case "$TRANSPORT_SETTING" in
+        rmw_zenoh_cpp|zenoh|zenoh/*)
+            log_and_echo "'${TRANSPORT_SETTING}' (zenoh) is not currently supported by this snap configuration."
+            log_and_echo "Reason: the snap's bridge layer is not zenoh-compatible."
+            log_and_echo "Workaround: use a FastDDS transport (udp / shm / udp-lo / fastdds/<X>) or Cyclone."
+            log_and_echo "  Or switch to a bridge that opts in (e.g. driver.link-layer=mavlink in rosbot-snap)."
+            list_available
+            exit 1
+            ;;
+    esac
+fi
 
 case "$TRANSPORT_SETTING" in
     # --- RMW-only tokens (no profile file) ---
@@ -184,6 +203,11 @@ case "$TRANSPORT_SETTING" in
         RMW_IMPL="rmw_cyclonedds_cpp"
         PROFILE_KIND="cyclonedds"
         ;;
+    rmw_zenoh_cpp|zenoh)
+        # Library default — no factory profile file.
+        RMW_IMPL="rmw_zenoh_cpp"
+        PROFILE_KIND="zenoh"
+        ;;
     # --- New canonical: <kind>/<name> ---
     fastdds/*)
         RMW_IMPL="rmw_fastrtps_cpp"
@@ -194,6 +218,11 @@ case "$TRANSPORT_SETTING" in
         RMW_IMPL="rmw_cyclonedds_cpp"
         PROFILE_KIND="cyclonedds"
         PROFILE="${SNAP_COMMON}/rmw/cyclonedds/${TRANSPORT_SETTING#cyclonedds/}.xml"
+        ;;
+    zenoh/*)
+        RMW_IMPL="rmw_zenoh_cpp"
+        PROFILE_KIND="zenoh"
+        PROFILE="${SNAP_COMMON}/rmw/zenoh/${TRANSPORT_SETTING#zenoh/}.json5"
         ;;
     # --- Legacy short tokens (FastDDS) ---
     udp)
@@ -276,6 +305,9 @@ echo "export RMW_IMPLEMENTATION=${RMW_IMPL}" >> "${ROS_ENV_FILE}.tmp"
 case "$PROFILE_KIND" in
     fastdds)
         echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
         if [ -n "$PROFILE" ]; then
             echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
         else
@@ -284,18 +316,39 @@ case "$PROFILE_KIND" in
         ;;
     cyclonedds)
         echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
         if [ -n "$PROFILE" ]; then
             echo "export CYCLONEDDS_URI=file://${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
         else
             echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
         fi
         ;;
+    zenoh)
+        # Session config picks the local-discovery / multicast / shm
+        # behaviour. The matching router profile (same basename) is
+        # selected via ZENOH_ROUTER_CONFIG_URI so rmw_zenohd starts with
+        # the corresponding shape — paired naming is the contract.
+        echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
+        if [ -n "$PROFILE" ]; then
+            echo "export ZENOH_SESSION_CONFIG_URI=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
+            router_profile="${SNAP_COMMON}/rmw/zenoh-router/$(basename "$PROFILE" .json5)-router.json5"
+            if [ -f "$router_profile" ]; then
+                echo "export ZENOH_ROUTER_CONFIG_URI=${router_profile}" >> "${ROS_ENV_FILE}.tmp"
+            else
+                echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+            fi
+        else
+            echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+            echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+        fi
+        # Default router-check retries — clients give the router a few
+        # seconds to come up before failing.
+        echo "export ZENOH_ROUTER_CHECK_ATTEMPTS=10" >> "${ROS_ENV_FILE}.tmp"
+        ;;
 esac
-
-# Always unset the zenoh env vars so a previous zenoh transport (now
-# rejected by the validator above) doesn't leave stale env behind.
-echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
 
 echo "ros.transport=${TRANSPORT_SETTING}" >> ${ROS_SNAP_ARGS}.tmp
 
