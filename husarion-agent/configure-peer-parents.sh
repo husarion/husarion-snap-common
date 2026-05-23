@@ -45,34 +45,60 @@ YQ="${SNAP}/usr/bin/yq"
 
 mkdir -p "$(dirname "$PARENTS_FILE")"
 
-# `snapctl get peer.parent -d` returns either:
-#   - the JSON subtree   `{ "parent": { "network-robot": "https://..." } }`
-#   - the literal `null` when `peer.parent` is fully unset
-#   - exits non-zero when `peer` itself is unset on first install
+# `snapctl get peer.parent` (no -d) returns the value of the dotted
+# key directly. For a map-typed subtree it emits the inner JSON object
+# as-is, which yq converts to top-level YAML keys without further
+# unwrapping. Example outputs on snapd 2.75:
 #
-# We treat any of the empty-ish cases as "no overrides" and write an
-# empty YAML file so the agent's next boot reliably clears stale state.
-parents_subtree="$(snapctl get peer.parent -d 2>/dev/null || true)"
+#   $ snapctl get peer.parent
+#   {
+#       "network-robot": "https://cockpit.local:7443"
+#   }
+#
+#   $ snapctl get peer.parent      # nothing set
+#                                  # (empty output, exit 0)
+#
+# We intentionally avoid `-d`. `snapctl get peer.parent -d` wraps the
+# subtree under the literal key `"peer.parent"`, which yq can't extract
+# without escaping (`."peer.parent"` is brittle across yq versions).
+parents_subtree="$(snapctl get peer.parent 2>/dev/null || true)"
 
 if [ -z "$parents_subtree" ] || [ "$parents_subtree" = "null" ]; then
     : > "$TMP_FILE"
 else
-    # Extract the inner map. yq's `-o yaml` flattens nested JSON to
-    # the flat top-level shape peer-parents.yaml expects:
+    # Convert JSON object → flat YAML keys. peer-parents.yaml shape is:
     #   network-robot: "https://cockpit.local:7443"
     #   drive: ""
-    # If the subtree is `{}` (operator set + unset everything), yq emits
-    # `{}\n` which the agent's loader handles fine (empty map).
-    if ! echo "$parents_subtree" | "$YQ" -p json -o yaml '.parent // {}' > "$TMP_FILE"; then
+    # If the subtree is `{}` (everything unset), yq emits `{}\n` which
+    # the agent's loader handles fine (empty map → no overrides).
+    if ! echo "$parents_subtree" | "$YQ" -p json -o yaml '. // {}' > "$TMP_FILE"; then
         echo "configure-peer-parents.sh: yq failed to translate snap-config subtree" >&2
         rm -f "$TMP_FILE"
         exit 1
     fi
 fi
 
+# Only swap the file in + restart the daemon if the content actually
+# changed. The configure hook fires on EVERY `snap set`, including
+# `ros.*` / `driver.*` keys unrelated to peer.parent. Restarting the
+# daemon on every such change would race with in-flight apply hooks
+# (leaving their lockfile stuck for 60s) and lose broadcasts to
+# followers. snap_watch sits in the agent process, so killing it
+# mid-event silently drops downstream propagation.
+old_hash=""
+new_hash=$(sha256sum < "$TMP_FILE" | awk '{print $1}')
+if [ -f "$PARENTS_FILE" ]; then
+    old_hash=$(sha256sum < "$PARENTS_FILE" | awk '{print $1}')
+fi
+
+if [ "$old_hash" = "$new_hash" ]; then
+    rm -f "$TMP_FILE"
+    exit 0
+fi
+
 mv -f "$TMP_FILE" "$PARENTS_FILE"
 
-# The husarion-agent daemon picks up the change on its next restart.
-# Trigger one so operator's `snap set peer.parent.*` takes effect
-# without an explicit `snap restart`.
+# Content actually changed — trigger a restart so the agent re-reads
+# peer-parents.yaml. The husarion-agent daemon reads the file on boot
+# (see husarion-agent/src/peer_parents.rs); there's no hot-reload yet.
 snapctl restart "${SNAP_INSTANCE_NAME}.husarion-agent" 2>/dev/null || true
