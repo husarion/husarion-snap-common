@@ -1,12 +1,15 @@
 #!/bin/sh
-# configure-snap-to-files.sh — reverse bridge: snap `ros.*` -> files-first config.
+# configure-snap-to-files.sh — reverse bridge: snap config -> files-first config.
 #
 # Run from a consumer snap's `configure` hook, AFTER configure_hook_ros.sh has
 # resolved ros.env. On a node that OWNS the network concern (role: source /
-# does NOT follow `network` from an upstream) it pushes the just-set ROS config
-# into the files-first config, so the husarion-agent propagates it to downstream
-# followers. Without it, `snap set <snap> ros.*` would only touch this node's
-# local ros.env and never reach the chain (self-contained rosbot -> rplidar).
+# does NOT follow `network` from an upstream) it pushes the just-set config into
+# the files-first config, so the husarion-agent propagates it to downstream
+# followers. Two things are bridged on `snap set`:
+#   1. the scalar ros.* values (domain / namespace / discovery / RMW + profile);
+#   2. new/changed rmw PROFILE FILES the operator dropped into $SNAP_COMMON/rmw.
+# Without it, `snap set <snap> ros.*` / a dropped profile would only touch this
+# node locally and never reach the chain (self-contained rosbot -> rplidar).
 #
 # Self-gating + loop-safe:
 #   * no-op unless the agent socket is up, `curl` is present, and this node
@@ -73,21 +76,66 @@ add ROS_AUTOMATIC_DISCOVERY_RANGE "$DISCOVERY"
 add RMW_IMPLEMENTATION "$RMW"
 add_clearable RMW_PROFILE "$PROFILE"
 
-[ -n "$fields" ] || exit 0
+# --- rmw profile FILES: $SNAP_COMMON/rmw -> files-first `rmw` concern ----------
+# The driver reads its DDS/zenoh profiles from $SNAP_COMMON/rmw (the downstream
+# mirror the forward `rmw` hook writes). This lets an operator on the source do
+#   cp myprofile.json5 $SNAP_COMMON/rmw/zenoh/ && snap set <snap> ros.transport=zenoh/myprofile
+# and have the FILE propagate to followers alongside the selection: on `snap set`
+# we PUT any profile that's new/changed vs the concern into the agent's rmw
+# files API. Add-only (never deletes) so a transiently-empty mirror can't wipe
+# the concern; removals go through the API's DELETE explicitly. `yq` JSON-encodes
+# the file content (jq isn't in every snap; yq is). Reports 1 if anything needs
+# pushing (used to decide whether to spawn the deferred worker).
+RMW_SRC="${SNAP_COMMON}/rmw"
+rmw_dirty() {
+    [ -d "$RMW_SRC" ] || return 1
+    for sub in fastdds cyclonedds zenoh zenoh-router; do
+        [ -d "$RMW_SRC/$sub" ] || continue
+        for f in "$RMW_SRC/$sub"/*; do
+            [ -f "$f" ] || continue
+            c="${STATE_DIR}/config/rmw/$sub/$(basename "$f")"
+            { [ ! -f "$c" ] || ! cmp -s "$f" "$c"; } && return 0
+        done
+    done
+    return 1
+}
+push_rmw() {
+    command -v yq >/dev/null 2>&1 || return 0
+    for sub in fastdds cyclonedds zenoh zenoh-router; do
+        [ -d "$RMW_SRC/$sub" ] || continue
+        for f in "$RMW_SRC/$sub"/*; do
+            [ -f "$f" ] || continue
+            n="$(basename "$f")"
+            c="${STATE_DIR}/config/rmw/$sub/$n"
+            { [ -f "$c" ] && cmp -s "$f" "$c"; } && continue
+            body="$(yq -n ".content = load_str(\"$f\")" -o=json 2>/dev/null)" || continue
+            curl -sf --unix-socket "$SOCK" -X PUT \
+                "http://localhost/api/agent/v1/config/concerns/rmw/files/${sub}/${n}" \
+                -H 'Content-Type: application/json' -d "$body" >/dev/null 2>&1 || true
+        done
+    done
+}
 
-echo "configure-snap-to-files.sh: owner node — scheduling chain propagation of snap ros.* ({${fields}})"
-# Defer + detach the PUT. This script runs inside the snap's `configure` hook,
-# which holds snapd's per-snap lock. The agent's apply (triggered by the PUT)
-# runs the forward network hook -> `snapctl set` -> `meta/hooks/configure`,
-# which would block on that same lock -> deadlock. So we return from configure
-# FIRST, then PUT a moment later. `& disown` (NOT setsid — denied by the
-# rplidar AppArmor profile, see husarion-snap-common-#rplidar-setsid) keeps the
-# subshell alive past the hook's exit.
+# Nothing changed (no ros.* diff, no new rmw profile) -> converged, stop.
+if [ -z "$fields" ] && ! rmw_dirty; then
+    exit 0
+fi
+
+echo "configure-snap-to-files.sh: owner node — scheduling chain propagation (ros.*={${fields}}, rmw files synced)"
+# Defer + detach the work. This runs inside the snap's `configure` hook, which
+# holds snapd's per-snap lock. The agent's apply (triggered by our PUTs) runs the
+# forward hooks -> `snapctl set` -> `meta/hooks/configure`, which would block on
+# that same lock -> deadlock. So we return from configure FIRST, then push a
+# moment later. `& disown` (NOT setsid — denied by the rplidar AppArmor profile,
+# see husarion-snap-common-#rplidar-setsid) keeps the subshell alive past exit.
 (
     sleep 2
-    curl -sf --unix-socket "$SOCK" -X PUT \
-        http://localhost/api/agent/v1/config/concerns/network \
-        -H 'Content-Type: application/json' \
-        -d "{\"values\":{${fields}}}"
+    push_rmw
+    if [ -n "$fields" ]; then
+        curl -sf --unix-socket "$SOCK" -X PUT \
+            http://localhost/api/agent/v1/config/concerns/network \
+            -H 'Content-Type: application/json' \
+            -d "{\"values\":{${fields}}}"
+    fi
 ) </dev/null >/dev/null 2>&1 &
 disown 2>/dev/null || true
