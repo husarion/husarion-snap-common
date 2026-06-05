@@ -42,9 +42,28 @@ NAMESPACE="$(snapctl get ros.namespace 2>/dev/null || true)"
 DISCOVERY="$(snapctl get ros.automatic-discovery-range 2>/dev/null | tr 'a-z' 'A-Z' || true)"
 RMW="$(grep -E '^export RMW_IMPLEMENTATION=' "$ROS_ENV" 2>/dev/null | tail -1 | cut -d= -f2 || true)"
 
+# RMW_PROFILE is the profile half of the `ros.transport` token (the DDS/zenoh
+# config name). It is SHARED so a `zenoh/shm` selection on the source reaches
+# followers intact — without it the forward hook re-derives transport from RMW
+# + an empty profile and collapses `zenoh/shm` back to `rmw_zenoh_cpp`. Parse it
+# the same way configure_hook_ros.sh does (kind/profile, bare impl = none, plus
+# the legacy fastdds/cyclonedds aliases).
+TRANSPORT="$(snapctl get ros.transport 2>/dev/null || true)"
+case "$TRANSPORT" in
+    */*)            PROFILE="${TRANSPORT#*/}" ;;
+    rmw_*)          PROFILE="" ;;
+    udp|shm|udp-lo) PROFILE="$TRANSPORT" ;;
+    udp-lo-cyclone) PROFILE="udp-lo" ;;
+    *)              PROFILE="" ;;
+esac
+
 fields=""
-add() {  # KEY VALUE — append to the PUT body only when the value changed
+add() {  # KEY VALUE — non-empty only (empty = "leave unchanged")
     [ -n "$2" ] || return 0
+    [ "$(cur "$1")" = "$2" ] && return 0
+    fields="${fields}${fields:+,}\"$1\":\"$2\""
+}
+add_clearable() {  # KEY VALUE — empty allowed (e.g. clearing a profile)
     [ "$(cur "$1")" = "$2" ] && return 0
     fields="${fields}${fields:+,}\"$1\":\"$2\""
 }
@@ -52,6 +71,7 @@ add ROS_DOMAIN_ID "$DOMAIN"
 add ROS_NAMESPACE "$NAMESPACE"
 add ROS_AUTOMATIC_DISCOVERY_RANGE "$DISCOVERY"
 add RMW_IMPLEMENTATION "$RMW"
+add_clearable RMW_PROFILE "$PROFILE"
 
 [ -n "$fields" ] || exit 0
 
