@@ -43,6 +43,7 @@ cur() { grep -E "^$1=" "$SHARED" 2>/dev/null | tail -1 | cut -d= -f2- || true; }
 DOMAIN="$(snapctl get ros.domain-id 2>/dev/null || true)"
 NAMESPACE="$(snapctl get ros.namespace 2>/dev/null || true)"
 DISCOVERY="$(snapctl get ros.automatic-discovery-range 2>/dev/null | tr 'a-z' 'A-Z' || true)"
+STATIC_PEERS="$(snapctl get ros.static-peers 2>/dev/null || true)"
 RMW="$(grep -E '^export RMW_IMPLEMENTATION=' "$ROS_ENV" 2>/dev/null | tail -1 | cut -d= -f2 || true)"
 
 # RMW_PROFILE is the profile half of the `ros.transport` token (the DDS/zenoh
@@ -75,6 +76,7 @@ add ROS_NAMESPACE "$NAMESPACE"
 add ROS_AUTOMATIC_DISCOVERY_RANGE "$DISCOVERY"
 add RMW_IMPLEMENTATION "$RMW"
 add_clearable RMW_PROFILE "$PROFILE"
+add_clearable ROS_STATIC_PEERS "$STATIC_PEERS"
 
 # --- rmw profile FILES: $SNAP_COMMON/rmw -> files-first `rmw` concern ----------
 # The driver reads its DDS/zenoh profiles from $SNAP_COMMON/rmw (the downstream
