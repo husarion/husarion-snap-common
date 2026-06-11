@@ -53,10 +53,35 @@ export HUSARION_AGENT_HOSTNAME="${SNAP_INSTANCE_NAME:-$(basename "$0")}"
 extra=""
 [ -n "${HA_PEER_BIND:-}" ] && extra="$extra --peer-tls-bind ${HA_PEER_BIND}"
 
+# --- content-interface chaining (SPEC-content-chain.md) ----------------------
+# Same-host, zero-config chaining over the snap content interface. The role is
+# selected by which directory exists — no per-snap launcher logic:
+#   * PROVIDER (rosbot): its install hook mints $SNAP_COMMON/agent-chain (the
+#     slot's write: source). Its presence → run the agent with
+#     --content-join-dir so it advertises CA+URL there and signs CSRs followers
+#     drop in requests/.
+#   * FOLLOWER (rplidar/depthai): snapd creates the plug target
+#     $SNAP_COMMON/agent-chain-upstream only while the interface is connected.
+#     If it's there, best-effort self-heal the join in the BACKGROUND so the
+#     daemon boots immediately; the fspeer follow loop adopts the cert as soon
+#     as content-join writes it. `no-restart` because we're (re)starting anyway.
+CONTENT_SLOT="${SNAP_COMMON}/agent-chain"
+CONTENT_UPSTREAM="${SNAP_COMMON}/agent-chain-upstream"
+content_extra=""
+if [ -d "$CONTENT_SLOT" ]; then
+    content_extra="--content-join-dir ${CONTENT_SLOT}"
+elif [ -d "$CONTENT_UPSTREAM" ]; then
+    FOLLOWER_HELPER="${SNAP}/usr/bin/content-join-follower.sh"
+    if [ -x "$FOLLOWER_HELPER" ]; then
+        "$FOLLOWER_HELPER" no-restart >/dev/null 2>&1 &
+    fi
+fi
+
+# shellcheck disable=SC2086  # $extra / $content_extra are intentional word-split flag lists
 exec "${SNAP}/usr/bin/husarion-agent" \
     --socket "$SOCK" \
     --state-dir "$STATE_DIR" \
     --config-root "$STATE_DIR" \
     --panels-default "$PANELS_DEFAULT" \
     --panels-overrides "$PANELS_OVERRIDES" \
-    $extra
+    $extra $content_extra
