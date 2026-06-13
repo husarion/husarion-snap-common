@@ -16,8 +16,25 @@ ROS_ENV_FILE="${SNAP_COMMON}/ros.env"
 # Create the ${SNAP_COMMON}/ros.env file and export variables (for bash session running ROS2)
 ROS_SNAP_ARGS="${SNAP_COMMON}/ros_snap_args"
 
-rm -rf "${ROS_ENV_FILE}.tmp"
-rm -rf "${ROS_SNAP_ARGS}.tmp"
+# Serialize concurrent runs. The files-first chain applies the `network` concern
+# several times in quick succession (SSE file-sync + the reverse command
+# channel, each firing the snap's configure hook). Two runs racing on a SHARED
+# ros.env temp file truncated ros.env — it kept only the trailing RMW block and
+# dropped the ROS_DOMAIN_ID / ROS_NAMESPACE lines written first, so the driver
+# booted on the wrong DDS/zenoh domain (domain 0 vs the rest of the graph on
+# 12): no battery, no joint_states, motors dead. flock makes regeneration
+# atomic per snap; the per-run mktemp temps below are the belt-and-suspenders
+# guarantee on hosts where flock isn't staged.
+if [ -z "${HSC_ROS_ENV_LOCKED:-}" ] && command -v flock >/dev/null 2>&1; then
+  export HSC_ROS_ENV_LOCKED=1
+  exec flock "${SNAP_COMMON}/.ros_env.lock" "$0" "$@"
+fi
+
+# Unique per-run temp files in the target dir (same filesystem → atomic mv;
+# never shared across concurrent runs the way a fixed ".tmp" suffix was).
+ROS_ENV_TMP="$(mktemp "${ROS_ENV_FILE}.XXXXXX")"
+ROS_SNAP_ARGS_TMP="$(mktemp "${ROS_SNAP_ARGS}.XXXXXX")"
+trap 'rm -f "${ROS_ENV_TMP}" "${ROS_SNAP_ARGS_TMP}"' EXIT
 
 if [[ $ROS_DISTRO == "humble" ]]; then
   VALID_ROS_KEYS=("localhost-only" "domain-id" "transport" "namespace")
@@ -39,11 +56,11 @@ elif [[ $ROS_DISTRO == "jazzy" ]]; then
   ROS_AUTOMATIC_DISCOVERY_RANGE="$(snapctl get ros.automatic-discovery-range)"
 
   if [ -n "$ROS_AUTOMATIC_DISCOVERY_RANGE" ]; then
-    echo "export ROS_AUTOMATIC_DISCOVERY_RANGE=$(echo "$ROS_AUTOMATIC_DISCOVERY_RANGE" | tr '[:lower:]' '[:upper:]')" >> "${ROS_ENV_FILE}.tmp"
-    echo "ros.automatic-discovery-range=${ROS_AUTOMATIC_DISCOVERY_RANGE}" >> ${ROS_SNAP_ARGS}.tmp
+    echo "export ROS_AUTOMATIC_DISCOVERY_RANGE=$(echo "$ROS_AUTOMATIC_DISCOVERY_RANGE" | tr '[:lower:]' '[:upper:]')" >> "${ROS_ENV_TMP}"
+    echo "ros.automatic-discovery-range=${ROS_AUTOMATIC_DISCOVERY_RANGE}" >> ${ROS_SNAP_ARGS_TMP}
   else
-    echo "unset ROS_AUTOMATIC_DISCOVERY_RANGE" >> "${ROS_ENV_FILE}.tmp"
-    echo "ros.automatic-discovery-range=''" >> ${ROS_SNAP_ARGS}.tmp
+    echo "unset ROS_AUTOMATIC_DISCOVERY_RANGE" >> "${ROS_ENV_TMP}"
+    echo "ros.automatic-discovery-range=''" >> ${ROS_SNAP_ARGS_TMP}
     snapctl set ros.automatic-discovery-range=''
   fi
   
@@ -53,11 +70,11 @@ elif [[ $ROS_DISTRO == "jazzy" ]]; then
   ROS_STATIC_PEERS="$(snapctl get ros.static-peers)"
 
   if [ -n "$ROS_STATIC_PEERS" ]; then
-    echo "export ROS_STATIC_PEERS='${ROS_STATIC_PEERS}'" >> "${ROS_ENV_FILE}.tmp"
-    echo "ros.static-peers='${ROS_STATIC_PEERS}'" >> ${ROS_SNAP_ARGS}.tmp
+    echo "export ROS_STATIC_PEERS='${ROS_STATIC_PEERS}'" >> "${ROS_ENV_TMP}"
+    echo "ros.static-peers='${ROS_STATIC_PEERS}'" >> ${ROS_SNAP_ARGS_TMP}
   else
-    echo "unset ROS_STATIC_PEERS" >> "${ROS_ENV_FILE}.tmp"
-    echo "ros.static-peers=''" >> ${ROS_SNAP_ARGS}.tmp
+    echo "unset ROS_STATIC_PEERS" >> "${ROS_ENV_TMP}"
+    echo "ros.static-peers=''" >> ${ROS_SNAP_ARGS_TMP}
     snapctl set ros.static-peers=''
   fi
 
@@ -72,11 +89,11 @@ validate_option --allow-unset "ros.localhost-only" VALID_ROS_LOCALHOST_ONLY_OPTI
 ROS_LOCALHOST_ONLY="$(snapctl get ros.localhost-only)"
 
 if [ -n "$ROS_LOCALHOST_ONLY" ]; then
-  echo "export ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}" >> "${ROS_ENV_FILE}.tmp"
-  echo "ros.localhost-only=${ROS_LOCALHOST_ONLY}" >> ${ROS_SNAP_ARGS}.tmp
+  echo "export ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY}" >> "${ROS_ENV_TMP}"
+  echo "ros.localhost-only=${ROS_LOCALHOST_ONLY}" >> ${ROS_SNAP_ARGS_TMP}
 else
-  echo "unset ROS_LOCALHOST_ONLY" >> "${ROS_ENV_FILE}.tmp"
-  echo "ros.localhost-only=''" >> ${ROS_SNAP_ARGS}.tmp
+  echo "unset ROS_LOCALHOST_ONLY" >> "${ROS_ENV_TMP}"
+  echo "ros.localhost-only=''" >> ${ROS_SNAP_ARGS_TMP}
   snapctl set ros.localhost-only=''
 fi
 
@@ -86,8 +103,8 @@ validate_number "ros.domain-id" SUPPORTED_RANGE[@]
 
 ROS_DOMAIN_ID="$(snapctl get ros.domain-id)"
 
-echo "export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}" >> "${ROS_ENV_FILE}.tmp"
-echo "ros.domain-id=${ROS_DOMAIN_ID}" >> ${ROS_SNAP_ARGS}.tmp
+echo "export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}" >> "${ROS_ENV_TMP}"
+echo "ros.domain-id=${ROS_DOMAIN_ID}" >> ${ROS_SNAP_ARGS_TMP}
 
 # Validate the ROS_NAMESPACE
 
@@ -96,11 +113,11 @@ validate_regex --allow-unset "ros.namespace" "^[0-9a-z_-]{1,20}$"
 ROS_NAMESPACE=$(snapctl get ros.namespace)
 
 if [ -n "$ROS_NAMESPACE" ]; then
-  echo "export ROS_NAMESPACE=${ROS_NAMESPACE}" >> "${ROS_ENV_FILE}.tmp"
-  echo "ros.namespace=${ROS_NAMESPACE}" >> ${ROS_SNAP_ARGS}.tmp
+  echo "export ROS_NAMESPACE=${ROS_NAMESPACE}" >> "${ROS_ENV_TMP}"
+  echo "ros.namespace=${ROS_NAMESPACE}" >> ${ROS_SNAP_ARGS_TMP}
 else
-  echo "unset ROS_NAMESPACE" >> "${ROS_ENV_FILE}.tmp"
-  echo "ros.namespace=''" >> ${ROS_SNAP_ARGS}.tmp
+  echo "unset ROS_NAMESPACE" >> "${ROS_ENV_TMP}"
+  echo "ros.namespace=''" >> ${ROS_SNAP_ARGS_TMP}
   snapctl set ros.namespace=''
 fi
 
@@ -301,28 +318,28 @@ fi
 #
 # Always unset the env vars OTHER than the one we're about to set,
 # so the daemon doesn't see stale config from a previous transport.
-echo "export RMW_IMPLEMENTATION=${RMW_IMPL}" >> "${ROS_ENV_FILE}.tmp"
+echo "export RMW_IMPLEMENTATION=${RMW_IMPL}" >> "${ROS_ENV_TMP}"
 case "$PROFILE_KIND" in
     fastdds)
-        echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_TMP}"
+        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_TMP}"
+        echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_TMP}"
+        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_TMP}"
         if [ -n "$PROFILE" ]; then
-            echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
+            echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${PROFILE}" >> "${ROS_ENV_TMP}"
         else
-            echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
+            echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_TMP}"
         fi
         ;;
     cyclonedds)
-        echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_TMP}"
+        echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_TMP}"
+        echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_TMP}"
+        echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_TMP}"
         if [ -n "$PROFILE" ]; then
-            echo "export CYCLONEDDS_URI=file://${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
+            echo "export CYCLONEDDS_URI=file://${PROFILE}" >> "${ROS_ENV_TMP}"
         else
-            echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
+            echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_TMP}"
         fi
         ;;
     zenoh)
@@ -330,27 +347,27 @@ case "$PROFILE_KIND" in
         # behaviour. The matching router profile (same basename) is
         # selected via ZENOH_ROUTER_CONFIG_URI so rmw_zenohd starts with
         # the corresponding shape — paired naming is the contract.
-        echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_FILE}.tmp"
-        echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_FILE}.tmp"
+        echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_TMP}"
+        echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_TMP}"
         if [ -n "$PROFILE" ]; then
-            echo "export ZENOH_SESSION_CONFIG_URI=${PROFILE}" >> "${ROS_ENV_FILE}.tmp"
+            echo "export ZENOH_SESSION_CONFIG_URI=${PROFILE}" >> "${ROS_ENV_TMP}"
             router_profile="${SNAP_COMMON}/rmw/zenoh-router/$(basename "$PROFILE" .json5)-router.json5"
             if [ -f "$router_profile" ]; then
-                echo "export ZENOH_ROUTER_CONFIG_URI=${router_profile}" >> "${ROS_ENV_FILE}.tmp"
+                echo "export ZENOH_ROUTER_CONFIG_URI=${router_profile}" >> "${ROS_ENV_TMP}"
             else
-                echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+                echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_TMP}"
             fi
         else
-            echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
-            echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_FILE}.tmp"
+            echo "unset ZENOH_SESSION_CONFIG_URI" >> "${ROS_ENV_TMP}"
+            echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_TMP}"
         fi
         # Default router-check retries — clients give the router a few
         # seconds to come up before failing.
-        echo "export ZENOH_ROUTER_CHECK_ATTEMPTS=10" >> "${ROS_ENV_FILE}.tmp"
+        echo "export ZENOH_ROUTER_CHECK_ATTEMPTS=10" >> "${ROS_ENV_TMP}"
         ;;
 esac
 
-echo "ros.transport=${TRANSPORT_SETTING}" >> ${ROS_SNAP_ARGS}.tmp
+echo "ros.transport=${TRANSPORT_SETTING}" >> ${ROS_SNAP_ARGS_TMP}
 
 
 # Make sure ros-humble-ros-base is connected
@@ -362,9 +379,9 @@ if ! snapctl is-connected ${ROS_PLUG}; then
     exit 1
 fi
 
-mv "${ROS_ENV_FILE}.tmp" "${ROS_ENV_FILE}"
+mv "${ROS_ENV_TMP}" "${ROS_ENV_FILE}"
 # Combine all lines into a single line and write to the final file
-tr '\n' ' ' < "${ROS_SNAP_ARGS}.tmp" | sed 's/ $/\n/' > "${ROS_SNAP_ARGS}"
+tr '\n' ' ' < "${ROS_SNAP_ARGS_TMP}" | sed 's/ $/\n/' > "${ROS_SNAP_ARGS}"
 
 # Define the path for the manage_ros_env.sh script
 MANAGE_SCRIPT="${SNAP_COMMON}/manage_ros_env.sh"
