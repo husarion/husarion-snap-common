@@ -12,5 +12,15 @@
                 <Peer address="localhost"/>
             </Peers>
         </Discovery>
+        <Internal>
+            <!-- Large sensor frames (e.g. a 1280x720 bgr8 camera image is
+                 ~2.7 MB) fragment into many UDP datagrams. The default OS
+                 socket buffer (~208 KB) can't hold one frame, so a busy
+                 receiver (the husarion-camera node ingesting a ROS-topic
+                 source) drops fragments -> whole samples lost -> no image.
+                 Request a large receive buffer; pair with a raised
+                 net.core.rmem_max (the OS caps this value otherwise). -->
+            <SocketReceiveBufferSize min="16 MB"/>
+        </Internal>
     </Domain>
 </CycloneDDS>
