@@ -1,0 +1,60 @@
+#
+# Health — minimal, standalone panel shipped INSIDE every Husarion snap
+# (rosbot / husarion-rplidar / husarion-depthai). Served by the snap's own
+# embedded husarion-agent so the snap is self-describing without the cockpit
+# host BIC.
+#
+# CONFINEMENT CONTRACT — these probes run as the snap's `husarion-agent`
+# daemon, which plugs only `network`/`network-bind`. That means NO
+# `systemctl` / `snap` / `journalctl` / `docker` / `df` (all denied or
+# absent under strict confinement). Probes may use ONLY:
+#   * snapctl get / snapctl services   (own snap, no snap name needed)
+#   * reads under $SNAP and $SNAP_COMMON
+#   * coreutils (awk, cat, grep, ...)
+# Keep this file snap-AGNOSTIC: `snapctl services` lists the running snap's
+# own services, so the same YAML works in every snap unchanged.
+#
+# Contract per probe: exit 0 = pass, non-zero = fail; stdout is a short
+# human-readable status the WebUI shows in the row. Cap 10 s per probe.
+
+name: health
+title: Health
+icon: gauge
+description: At-a-glance status of this snap
+notice: >-
+  Served by this snap's own husarion-agent. Each probe runs on demand
+  when the page mounts — green means the check passed, red means it
+  failed. The value shown is the probe's own status string.
+
+live_reads:
+  - id: driver_daemon
+    title: Driver daemon
+    description: >-
+      The snap's main `.daemon` service is active under snapd. Red means
+      it's stopped or never started — start it with this snap's `.start`
+      app (the daemon is install-mode disable: an explicit opt-in).
+    exec:
+      - /bin/sh
+      - -c
+      - |
+        s=$(snapctl services 2>/dev/null | awk '$1 ~ /\.daemon$/ {print $3; exit}')
+        case "$s" in
+          active)   echo "active"; exit 0 ;;
+          inactive) echo "inactive (stopped or never started — run <snap>.start)"; exit 1 ;;
+          "")       echo "no .daemon service found"; exit 1 ;;
+          *)        echo "$s"; exit 1 ;;
+        esac
+
+  - id: config_loaded
+    title: Files-first config
+    description: >-
+      The embedded agent's config-root holds its identity (agent.yaml).
+      Red means the config-root wasn't seeded — the launcher copies it
+      from the snap-shipped config-seed on first boot.
+    exec:
+      - /bin/sh
+      - -c
+      - |
+        f="${SNAP_COMMON}/husarion-agent/agent.yaml"
+        if [ -r "$f" ]; then echo "agent.yaml present"; exit 0
+        else echo "agent.yaml missing at $f"; exit 1; fi

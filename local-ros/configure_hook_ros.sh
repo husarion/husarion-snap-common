@@ -383,6 +383,15 @@ mv "${ROS_ENV_TMP}" "${ROS_ENV_FILE}"
 # Combine all lines into a single line and write to the final file
 tr '\n' ' ' < "${ROS_SNAP_ARGS_TMP}" | sed 's/ $/\n/' > "${ROS_SNAP_ARGS}"
 
+# ros.env / ros_snap_args carry no secrets (ROS domain/namespace/RMW selection)
+# and MUST be world-readable: user-facing apps (`<snap>.teleop`, an interactive
+# shell sourcing it via manage_ros_env.sh) read them WITHOUT root. ROS_ENV_TMP
+# comes from mktemp (always 0600), and the configure hook now also fires from the
+# files-first husarion-agent daemon auto-apply (umask 0077) — both paths land
+# ros.env 0600, so `<snap>.teleop` fails with "Permission denied". chmod
+# explicitly so the mode is deterministic regardless of caller.
+chmod 0644 "${ROS_ENV_FILE}" "${ROS_SNAP_ARGS}"
+
 # Define the path for the manage_ros_env.sh script
 MANAGE_SCRIPT="${SNAP_COMMON}/manage_ros_env.sh"
 
