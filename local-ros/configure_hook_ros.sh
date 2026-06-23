@@ -108,7 +108,7 @@ echo "ros.domain-id=${ROS_DOMAIN_ID}" >> ${ROS_SNAP_ARGS_TMP}
 
 # Validate the ROS_NAMESPACE
 
-validate_regex --allow-unset "ros.namespace" "^[0-9a-z_-]{1,20}$"
+validate_regex --allow-unset "ros.namespace" "^[a-z_][0-9a-z_]{0,19}$"
 
 ROS_NAMESPACE=$(snapctl get ros.namespace)
 
