@@ -87,19 +87,27 @@ $SNAP/usr/bin/install_hook_ros.sh
 ## `husarion-agent/` subtree (v0.8.0+)
 
 Shared substrate for snaps that embed the husarion-agent daemon
-as a chained-agents follower (rosbot-snap, husarion-rplidar-snap,
-husarion-camera-snap, …). Before this subtree existed each
+as a chained-agents follower (rosbot, husarion-rplidar,
+husarion-depthai, …). Before this subtree existed each
 consuming snap duplicated ~120 lines of launcher script, binary
 fetch, and apply hooks.
 
 ### What lives here
 
+The agent here is **files-first** (the v2 `--capabilities-*` / `--tier`
+substrate was removed): the launcher seeds a config-root from a
+snap-shipped `config-seed/` and the daemon reads/execs from it. Same-host
+chaining is over the **snap content interface**, not a per-snap parent URL.
+
 | Path | Role |
 |---|---|
-| `husarion-agent/fetch-binary.sh` | curl + sha256-verify the husarion-agent release binary. Called from the consumer's `husarion-agent` part during `override-build`. Parameterised by `HA_VERSION` env. |
-| `husarion-agent/launcher.sh` | Daemon launcher. Reads `HA_TIER` / `HA_PEER_BIND` from env. Stages shipped hooks into `${SNAP_COMMON}/husarion-agent/hooks.d/`, then exec's the daemon. |
-| `husarion-agent/hooks.d/network_robot/10-snap-set.sh` | Generic apply hook for the `network_robot/ros_env` resource. Translates `HUSARION_AGENT_ROS_*` env vars → `snapctl set ros.*`. Same code on every snap. |
-| `husarion-agent/hooks.d/drive/10-snap-set.sh` | Generic apply hook for the `drive/drive` resource. Translates `HUSARION_AGENT_MECANUM` / `CONFIGURATION` / `LED_STRIP` / `TF_NAMESPACE_BRIDGE` → `snapctl set driver.*`. Only fires on snaps whose schema understands those keys (rosbot today). Dead weight on leaf snaps but harmless. |
+| `husarion-agent/fetch-binary.sh` | curl + sha256-verify the husarion-agent release binary into `${CRAFT_PART_BUILD}/husarion-agent`. Called from the consumer's `husarion-agent` part during `override-build`. Parameterised by `HA_VERSION` env; pulls from the `husarion-cockpit-releases` GitHub release. |
+| `husarion-agent/launcher.sh` | Daemon launcher. Seeds the files-first config-root (`agent.yaml` / `follow.yaml` / `config/` / `hooks/` / `manifests/`) from `${SNAP}/usr/share/husarion-agent/config-seed/` into the writable `${SNAP_COMMON}/husarion-agent/`, selects content-interface chaining role by directory presence, then exec's the agent with `--socket` / `--state-dir` / `--config-root` / `--panels-default` / `--panels-overrides`. Reads only `HA_PEER_BIND` from env (cascading-primary listener). |
+| `husarion-agent/configure-snap-to-files.sh` | Reverse bridge run from the consumer's `configure` hook (after `configure_hook_ros.sh`). On a node that OWNS the `network` concern, PUTs the just-set `ros.*` scalars + any changed `${SNAP_COMMON}/rmw` profile files into the agent's HTTP API so they propagate to downstream followers. Self-gating + loop-safe. |
+| `husarion-agent/content-publish-primary.sh` | Provider (rosbot) side. Ensures the `${SNAP_COMMON}/agent-chain` slot dir + `requests/`/`certs/` exist so snapd's content bind-mount has a source and followers can drop CSRs. Idempotent; called from the install hook + connect-slot-agent-chain. |
+| `husarion-agent/content-join-follower.sh` | Follower (rplidar/depthai) side. Idempotent same-host content-interface join: drops a CSR into the mounted `agent-chain-upstream` dir and waits for the provider to sign it. Authorization IS the snap content connection (no bootstrap token). |
+| `husarion-agent/content-revoke-self.sh` | Follower side. On content-interface disconnect, drops a revoke marker into the still-mounted upstream dir so the provider auto-revokes this follower's cert. |
+| `husarion-agent/panels.d/{20-health,40-info}.yaml` | Snap-agnostic standalone Manage panels (`health`, `info`) shipped inside every snap and served by its own embedded agent under strict confinement. Staged as `--panels-default`. |
 
 ### How a consumer snap pulls it in
 
@@ -117,13 +125,14 @@ husarion-snap-common:
   build-packages: [curl]
   organize:
     # …existing local-ros/* organize rules…
-    # New v0.8.0 — husarion-agent shared substrate:
-    'husarion-agent/fetch-binary.sh': usr/share/husarion-snap-common/husarion-agent/fetch-binary.sh
-    'husarion-agent/launcher.sh':     usr/bin/husarion_agent_launcher.sh
-    'husarion-agent/hooks.d/network_robot/10-snap-set.sh':
-        usr/share/husarion-agent/hooks.d/network_robot/10-snap-set.sh
-    'husarion-agent/hooks.d/drive/10-snap-set.sh':
-        usr/share/husarion-agent/hooks.d/drive/10-snap-set.sh
+    # husarion-agent shared substrate (v0.8.0+, files-first):
+    'husarion-agent/fetch-binary.sh':         usr/share/husarion-snap-common/husarion-agent/fetch-binary.sh
+    'husarion-agent/launcher.sh':             usr/bin/husarion_agent_launcher.sh
+    'husarion-agent/configure-snap-to-files.sh': usr/bin/configure-snap-to-files.sh
+    'husarion-agent/content-publish-primary.sh': usr/bin/content-publish-primary.sh
+    'husarion-agent/content-join-follower.sh':   usr/bin/content-join-follower.sh
+    'husarion-agent/content-revoke-self.sh':     usr/bin/content-revoke-self.sh
+    'husarion-agent/panels.d/*.yaml':         usr/share/husarion-agent/panels.d/
 ```
 
 Add an `husarion-agent` part that runs `fetch-binary.sh`:
@@ -144,10 +153,12 @@ husarion-agent:
     install -Dm755 "${CRAFT_PART_BUILD}/husarion-agent" \
         "${CRAFT_PART_INSTALL}/usr/bin/husarion-agent"
   organize:
-    'capabilities.d/*.yaml': usr/share/husarion-agent/capabilities.d/
+    # Per-snap files-first seed (identity + topology + initial config +
+    # hooks + manifests). The launcher copies this into $SNAP_COMMON on boot.
+    'config-seed/**': usr/share/husarion-agent/config-seed/
 ```
 
-Add the two `apps:`:
+Add the `husarion-agent` daemon `app:`:
 
 ```yaml
 husarion-agent:
@@ -156,55 +167,46 @@ husarion-agent:
   install-mode: enable
   restart-condition: always
   plugs: [network, network-bind]
-
-peer-join:
-  command: usr/bin/husarion-agent
-  plugs: [network]
 ```
 
-Set the per-snap env at the snap level so both apps see it:
+Only the cascading-primary (rosbot) sets `HA_PEER_BIND` at the snap level
+so its agent opens an in-snap mTLS listener:
 
 ```yaml
 environment:
-  HA_TIER: "robot"
   HA_PEER_BIND: "0.0.0.0:7444"   # rosbot only — cascading primary
 ```
 
-Per-snap cap YAML lives in `snap/husarion-agent-extras/capabilities.d/`.
-Each snap ships its own (~25 lines): different primary URL,
-broadcast flag, cert paths.
+Leaf followers omit `HA_PEER_BIND` entirely. There is no `HA_TIER`, no
+`peer-join` app, and no `capabilities.d/` — the v2 capabilities substrate
+was removed. Per-snap identity + topology live in the `config-seed/`
+(`agent.yaml` / `follow.yaml` / `config/`), not in cap YAML.
 
-### Operator-managed per-cap parent (`peer.parent.<cap>`)
+### Same-host chaining over the snap content interface
 
-The shipped cap YAMLs declare a hardcoded `follows:` block. The
-operator can break or re-point it per cap, at runtime, without
-editing YAML:
+Chaining is selected by **directory presence**, with no per-snap launcher
+logic (see `launcher.sh`):
 
-```bash
-# Make the cockpit the parent for network_robot (default — matches
-# what the shipped YAML hardcodes):
-sudo snap set rosbot peer.parent.network-robot=https://cockpit.local:7443
+- **Provider (rosbot)** — its install hook calls `content-publish-primary.sh`
+  to mint `${SNAP_COMMON}/agent-chain` (the content slot's `write:` source).
+  Its presence makes the launcher add `--content-join-dir` so the agent
+  advertises `ca.pem` + `primary.url` there and signs CSRs followers drop
+  into `requests/`.
+- **Follower (rplidar/depthai)** — snapd creates the plug target
+  `${SNAP_COMMON}/agent-chain-upstream` only while the interface is
+  connected. The launcher best-effort runs `content-join-follower.sh`
+  (which execs `husarion-agent content-join`) in the background; the
+  follow loop adopts the signed cert as soon as it lands. The follower's
+  `disconnect-plug-agent-chain` hook calls `content-revoke-self.sh`.
 
-# Standalone master for drive (robot owns its kinematics):
-sudo snap unset rosbot peer.parent.drive
-```
+Authorization IS the snap content connection — snapd only auto-connects
+same-publisher snaps, so there's no bootstrap token. The connect/disconnect
+plug+slot hooks in the consumer snap invoke these helpers (the launcher
+also self-heals the follower join at boot).
 
-The consumer snap's `snap/hooks/configure` invokes the helper
-shipped here, which materialises `$SNAP_COMMON/husarion-agent/peer-parents.yaml`
-from `snapctl get peer.parent`:
+Operators re-point or break the chain by editing the files-first config
+(`follow.yaml` / the `network` concern) — not via a `peer.parent.<cap>`
+snap option (that mechanism is gone). A node that owns the `network`
+concern propagates its `ros.*` downstream via `configure-snap-to-files.sh`.
 
-```sh
-# Inside snap/hooks/configure (consumer snap), after the
-# usual driver/ros validation:
-if [ -x "$SNAP/usr/share/husarion-snap-common/husarion-agent/configure-peer-parents.sh" ]; then
-    sh "$SNAP/usr/share/husarion-snap-common/husarion-agent/configure-peer-parents.sh"
-fi
-```
-
-The agent re-reads the file + restarts to pick up the new parent
-on its next launch (the helper triggers a `snapctl restart`
-automatically). Cap-name canonicalisation (kebab→snake) is
-agent-side — `peer.parent.network-robot` resolves to the
-`network_robot` cap without manual translation.
-
-Requires husarion-agent v0.9.0+.
+Requires husarion-agent v0.9.0+ (content-interface chaining).

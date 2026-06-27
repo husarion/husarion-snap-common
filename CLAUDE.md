@@ -14,12 +14,13 @@ Shared library / staging tree for Husarion ROS 2 snaps. Pulled in by `rosbot-sna
 | `local-ros/check_daemon_running.sh` | Small probe used by app commands. |
 | `local-ros/rmw/fastdds/*.xml` | FastDDS profile XMLs — used when `ros.transport=fastdds/<name>` or legacy `udp` / `shm` / `udp-lo`. |
 | `local-ros/rmw/cyclonedds/*.xml` | CycloneDDS profile XMLs — used when `ros.transport=cyclonedds/<name>` or legacy `udp-lo-cyclone`. |
-| `local-ros/rmw/zenoh/*.json5` | Zenoh session configs — **dormant** (shipped but currently rejected by the validator; see "Zenoh status" below). |
-| `local-ros/rmw/zenoh-router/*.json5` | Zenoh router configs — **dormant** (same reason). |
+| `local-ros/rmw/zenoh/*.json5` | Zenoh session configs (`default.json5`, `shm.json5`) — gated behind `HSC_ALLOW_ZENOH=1`; see "Zenoh status" below. |
+| `local-ros/rmw/zenoh-router/*.json5` | Zenoh router configs (`default-router.json5`, `shm-router.json5`) — selected by basename to match the session profile; same gate. |
+| `local-ros/zenoh_router_launcher.sh` | `rmw_zenohd` launcher for the zenoh-router service (consumer snaps that run a router app). |
 
 ## `ros.transport` grammar (current, 0.6.0+)
 
-The validator in `configure_hook_ros.sh` accepts:
+The validator in `configure_hook_ros.sh` accepts (zenoh tokens additionally require `HSC_ALLOW_ZENOH=1` — see "Zenoh status"):
 
 **Legacy short tokens (kept for back-compat):**
 - `udp` → `rmw/fastdds/udp.xml`
@@ -30,10 +31,12 @@ The validator in `configure_hook_ros.sh` accepts:
 **RMW-only tokens (no profile, use library defaults):**
 - `rmw_fastrtps_cpp`
 - `rmw_cyclonedds_cpp`
+- `rmw_zenoh_cpp` / `zenoh` (only when `HSC_ALLOW_ZENOH=1`)
 
 **Canonical `<kind>/<name>` form:**
 - `fastdds/<name>` → `${SNAP_COMMON}/rmw/fastdds/<name>.xml`
 - `cyclonedds/<name>` → `${SNAP_COMMON}/rmw/cyclonedds/<name>.xml`
+- `zenoh/<name>` → `${SNAP_COMMON}/rmw/zenoh/<name>.json5` (only when `HSC_ALLOW_ZENOH=1`)
 
 **Fallback (back-compat for operator-uploaded files):**
 - `<X>` → `${SNAP_COMMON}/dds-config-<X>.xml` (existing flat-path uploads still work; `check_xml_profile_type` auto-detects FastDDS vs Cyclone)
@@ -44,16 +47,17 @@ The hook writes one of two env-var combos to `${SNAP_COMMON}/ros.env`:
 |---|---|---|
 | fastdds | `rmw_fastrtps_cpp` | `FASTRTPS_DEFAULT_PROFILES_FILE=<path>` (if a profile is set) |
 | cyclonedds | `rmw_cyclonedds_cpp` | `CYCLONEDDS_URI=file://<path>` (if a profile is set) |
+| zenoh | `rmw_zenoh_cpp` | `ZENOH_SESSION_CONFIG_URI=<path>` + `ZENOH_ROUTER_CONFIG_URI=<…-router.json5>` (if a profile is set) + `ZENOH_ROUTER_CHECK_ATTEMPTS=10` |
 
-Variables for the other kind (and the dormant `ZENOH_*` set) are `unset` so the daemon never sees stale config.
+Variables for the other kinds are `unset` so the daemon never sees stale config.
 
 ## Zenoh status
 
-`rmw_zenoh_cpp` is **rejected** by the validator. `ros.transport=zenoh*` (any of `zenoh`, `zenoh/<name>`, `rmw_zenoh_cpp`) exits with an error message pointing at the upstream blocker.
+`ros.transport=zenoh*` (any of `zenoh`, `zenoh/<name>`, `rmw_zenoh_cpp`) is **gated behind `HSC_ALLOW_ZENOH=1`**. By default (`HSC_ALLOW_ZENOH` unset) the validator rejects those tokens with an error message pointing at the bridge blocker. A consumer whose bridge is itself rclcpp-based opts in by exporting `HSC_ALLOW_ZENOH=1` from its `configure` hook *before* sourcing `configure_hook_ros.sh`; the zenoh case then resolves `zenoh/<name>` to the session profile (`rmw/zenoh/<name>.json5`) plus the matching `<name>-router.json5` and emits the `ZENOH_*` env block.
 
-Why: `micro_ros_agent` in the rosbot snap is statically linked to FastDDS (`readelf -d` shows it has DT_NEEDED on `libfastrtps.so.2.14` but no `librmw_implementation.so`). It ignores `RMW_IMPLEMENTATION` and publishes `_motors/feedback` / `_imu/data` to the FastDDS graph only. Under `rmw_zenoh_cpp`, `ros2_control_node` never sees those topics → `RosbotSystem::on_activate()` times out (25 s) → `ros2_control_node` SIGABRTs → daemon death loop. The `zenoh-plugin-ros2dds` bridge doesn't help (it uses an incompatible zenoh key scheme).
+Why the default-off: `micro_ros_agent` in the rosbot snap is statically linked to FastDDS (`readelf -d` shows it has DT_NEEDED on `libfastrtps.so.2.14` but no `librmw_implementation.so`). It ignores `RMW_IMPLEMENTATION` and publishes `_motors/feedback` / `_imu/data` to the FastDDS graph only. Under `rmw_zenoh_cpp`, `ros2_control_node` never sees those topics → `RosbotSystem::on_activate()` times out (25 s) → `ros2_control_node` SIGABRTs → daemon death loop. The `zenoh-plugin-ros2dds` bridge doesn't help (it uses an incompatible zenoh key scheme).
 
-The factory configs under `local-ros/rmw/zenoh{,-router}/` are kept dormant so the re-enable, when upstream lands a fix (rebuild `micro_ros_agent` against `librmw_implementation.so`, or ship a `rmw_zenoh_cpp`-aware DDS bridge), is a small revert in `configure_hook_ros.sh`.
+So the rosbot snap leaves `HSC_ALLOW_ZENOH` unset on its default `micro_ros_agent` path and only sets it on the `driver.backend=mavlink` path (where the bridge is `rosbot_mavlink_bridge`, an rclcpp node that honours the active RMW). The factory configs under `local-ros/rmw/zenoh{,-router}/` ship in every snap and are live wherever the gate is set.
 
 ## How `rosbot-snap` (the consumer) pulls this in
 
@@ -96,7 +100,7 @@ For production release: bump the `source-branch` back to a tagged version (e.g. 
 
 ## Versioning + release
 
-Currently no formal CHANGELOG. Tags follow `0.X.Y`. `0.5.0` is the last "flat dds-config-*.xml" layout. `0.6.0` introduces the `rmw/` tree + canonical `<kind>/<name>` tokens, and ships with `zenoh*` blocked at the validator (factory configs kept dormant — see "Zenoh status" above). Consumers pin a specific tag via `source-branch`.
+Currently no formal CHANGELOG. Tags follow `0.X.Y` (latest: `0.11.0`). `0.5.0` is the last "flat dds-config-*.xml" layout. `0.6.0` introduces the `rmw/` tree + canonical `<kind>/<name>` tokens, with `zenoh*` gated at the validator. `0.8.0`+ adds the `husarion-agent/` shared substrate (see README); later tags add the files-first launcher + content-interface chaining (drop the v2 capabilities substrate). Consumers pin a specific tag via `source-branch`.
 
 ## Testing surface
 
