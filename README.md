@@ -14,7 +14,7 @@ Add this to `parts`:
   husarion-snap-common:
     plugin: dump
     source: https://github.com/husarion/husarion-snap-common
-    source-branch: "0.3.0"
+    source-tag: "0.13.0"
     source-type: git
     build-environment:
       - YQ_VERSION: "v4.35.1"
@@ -22,7 +22,10 @@ Add this to `parts`:
       - curl
     organize:
       'local-ros/*.sh': usr/bin/
-      'local-ros/*.xml': usr/share/husarion-snap-common/config/
+      'local-ros/rmw/fastdds/*.xml': usr/share/husarion-snap-common/config/rmw/fastdds/
+      'local-ros/rmw/cyclonedds/*.xml': usr/share/husarion-snap-common/config/rmw/cyclonedds/
+      'local-ros/rmw/zenoh/*.json5': usr/share/husarion-snap-common/config/rmw/zenoh/
+      'local-ros/rmw/zenoh-router/*.json5': usr/share/husarion-snap-common/config/rmw/zenoh-router/
       'local-ros/ros.env': usr/share/husarion-snap-common/config/
     override-build: |
       craftctl default
@@ -118,7 +121,7 @@ Add to `parts:` (organize block extends the existing one for
 husarion-snap-common:
   plugin: dump
   source: https://github.com/husarion/husarion-snap-common
-  source-branch: "0.8.0"
+  source-tag: "0.13.0"
   source-type: git
   build-environment:
     - YQ_VERSION: "v4.35.1"
@@ -142,7 +145,7 @@ husarion-agent:
   plugin: nil
   after: [husarion-snap-common]
   build-environment:
-    - HA_VERSION: "0.8.0"
+    - HA_VERSION: "1.5.0"
   build-packages: [curl]
   source: snap/husarion-agent-extras/
   source-type: local
