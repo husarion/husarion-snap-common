@@ -22,7 +22,20 @@ STATE_DIR="${SNAP_COMMON}/husarion-agent"
 SOCK="${STATE_DIR}/agent.sock"
 PANELS_DEFAULT="${SNAP}/usr/share/husarion-agent/panels.d"
 PANELS_OVERRIDES="${STATE_DIR}/panels.d"
-mkdir -p "$STATE_DIR" "$PANELS_OVERRIDES" "${SNAP_COMMON}/peer-certs"
+# Same two-directory idiom as panels. Both dirs must live under the
+# snap-confined $SNAP (read-only, package-shipped) / $SNAP_COMMON
+# (writable, operator-editable) tree — NOT husarion-agent's own bare CLI
+# defaults (/usr/share/husarion-agent/advisories.d, /etc/husarion-agent/
+# advisories.d), which are host-absolute paths a strict-confinement
+# AppArmor profile denies. Left unset once, that denial used to crash-loop
+# the whole daemon on every boot (HW 2026-08-26, rosbot: agent never got
+# past startup, so it never reached its peer follow-task and ROS_NAMESPACE
+# never cascaded to the snap). husarion-agent now degrades a denied
+# overrides dir gracefully too (belt and suspenders), but the daemon
+# should never be pointed at an unreachable path in the first place.
+ADVISORIES_DEFAULT="${SNAP}/usr/share/husarion-agent/advisories.d"
+ADVISORIES_OVERRIDES="${STATE_DIR}/advisories.d"
+mkdir -p "$STATE_DIR" "$PANELS_OVERRIDES" "$ADVISORIES_OVERRIDES" "${SNAP_COMMON}/peer-certs"
 
 # Seed the files-first config-root from the snap-shipped seed.
 #   identity + topology + initial config (agent.yaml / follow.yaml /
@@ -84,4 +97,6 @@ exec "${SNAP}/usr/bin/husarion-agent" \
     --config-root "$STATE_DIR" \
     --panels-default "$PANELS_DEFAULT" \
     --panels-overrides "$PANELS_OVERRIDES" \
+    --advisories-default "$ADVISORIES_DEFAULT" \
+    --advisories-overrides "$ADVISORIES_OVERRIDES" \
     $extra $content_extra
