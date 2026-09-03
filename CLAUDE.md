@@ -100,7 +100,7 @@ For production release: bump the `source-branch` back to a tagged version (e.g. 
 
 ## Versioning + release
 
-Currently no formal CHANGELOG. Tags follow `0.X.Y` (latest: `0.11.0`). `0.5.0` is the last "flat dds-config-*.xml" layout. `0.6.0` introduces the `rmw/` tree + canonical `<kind>/<name>` tokens, with `zenoh*` gated at the validator. `0.8.0`+ adds the `husarion-agent/` shared substrate (see README); later tags add the files-first launcher + content-interface chaining (drop the v2 capabilities substrate). Consumers pin a specific tag via `source-branch`.
+Currently no formal CHANGELOG. Tags follow `0.X.Y` (latest: `0.14.0`). `0.5.0` is the last "flat dds-config-*.xml" layout. `0.6.0` introduces the `rmw/` tree + canonical `<kind>/<name>` tokens, with `zenoh*` gated at the validator. `0.8.0`+ adds the `husarion-agent/` shared substrate (see README); later tags add the files-first launcher + content-interface chaining (drop the v2 capabilities substrate). `0.14.0` folds in PRs #6-#10: factory `ros.env` no longer hardcodes another snap's path, the `rmw/` tree self-heals on `snap refresh` across the 0.5.0→0.6.0 layout change, `ROS_LOCALHOST_ONLY` translates to `ROS_AUTOMATIC_DISCOVERY_RANGE` on jazzy instead of still exporting the deprecated var, `launcher.sh` no longer needs `CAP_CHOWN` when seeding hooks/manifests, and `launcher.sh` points `--advisories-*` at snap-safe paths (was boot-looping husarion-agent under strict confinement, HW 2026-08-26 on rosbot). Consumers pin a specific tag via `source-tag`.
 
 ## Testing surface
 

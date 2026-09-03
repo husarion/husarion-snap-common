@@ -121,7 +121,7 @@ Add to `parts:` (organize block extends the existing one for
 husarion-snap-common:
   plugin: dump
   source: https://github.com/husarion/husarion-snap-common
-  source-tag: "0.13.0"
+  source-tag: "0.14.0"
   source-type: git
   build-environment:
     - YQ_VERSION: "v4.35.1"
@@ -145,7 +145,7 @@ husarion-agent:
   plugin: nil
   after: [husarion-snap-common]
   build-environment:
-    - HA_VERSION: "1.5.0"
+    - HA_VERSION: "1.13.0"
   build-packages: [curl]
   source: snap/husarion-agent-extras/
   source-type: local
