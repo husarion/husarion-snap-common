@@ -32,19 +32,23 @@ mkdir -p "$STATE_DIR" "$PANELS_OVERRIDES" "${SNAP_COMMON}/peer-certs"
 #   newer code wins (shipped > whatever was staged before).
 SEED_ROOT="${SNAP}/usr/share/husarion-agent/config-seed"
 if [ -d "$SEED_ROOT" ]; then
+    # --no-preserve=ownership: cp -a's chown of the copy to the source's uid
+    # needs CAP_CHOWN, which strict confinement's default daemon profile
+    # doesn't grant even to a root-run service — copy as the running user
+    # instead (mode/timestamps still preserved).
     for item in agent.yaml follow.yaml config; do
         if [ -e "$SEED_ROOT/$item" ] && [ ! -e "$STATE_DIR/$item" ]; then
-            cp -a "$SEED_ROOT/$item" "$STATE_DIR/$item"
+            cp -a --no-preserve=ownership "$SEED_ROOT/$item" "$STATE_DIR/$item"
         fi
     done
     if [ -d "$SEED_ROOT/hooks" ]; then
         mkdir -p "$STATE_DIR/hooks"
-        cp -a "$SEED_ROOT/hooks/." "$STATE_DIR/hooks/"
+        cp -a --no-preserve=ownership "$SEED_ROOT/hooks/." "$STATE_DIR/hooks/"
         find "$STATE_DIR/hooks" -type f -exec chmod 0755 {} +
     fi
     if [ -d "$SEED_ROOT/manifests" ]; then
         mkdir -p "$STATE_DIR/manifests"
-        cp -a "$SEED_ROOT/manifests/." "$STATE_DIR/manifests/"
+        cp -a --no-preserve=ownership "$SEED_ROOT/manifests/." "$STATE_DIR/manifests/"
     fi
 fi
 
