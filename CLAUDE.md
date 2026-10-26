@@ -34,6 +34,9 @@ The validator in `configure_hook_ros.sh` accepts (zenoh tokens additionally requ
 - `rmw_zenoh_cpp` / `zenoh` (only when `HSC_ALLOW_ZENOH=1`)
 
 **Canonical `<kind>/<name>` form:**
+
+The whole token must match `^([a-z]+/)?[A-Za-z0-9_][A-Za-z0-9._-]*$` and contain no `..` — the resolved path is written into `ros.env`, which root sources. Values in `ros.env` are emitted with `printf %q`.
+
 - `fastdds/<name>` → `${SNAP_COMMON}/rmw/fastdds/<name>.xml`
 - `cyclonedds/<name>` → `${SNAP_COMMON}/rmw/cyclonedds/<name>.xml`
 - `zenoh/<name>` → `${SNAP_COMMON}/rmw/zenoh/<name>.json5` (only when `HSC_ALLOW_ZENOH=1`)
