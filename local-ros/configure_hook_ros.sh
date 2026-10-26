@@ -135,7 +135,7 @@ validate_number "ros.domain-id" SUPPORTED_RANGE[@]
 
 ROS_DOMAIN_ID="$(snapctl get ros.domain-id)"
 
-echo "export ROS_DOMAIN_ID=${ROS_DOMAIN_ID}" >> "${ROS_ENV_TMP}"
+printf 'export ROS_DOMAIN_ID=%q\n' "${ROS_DOMAIN_ID}" >> "${ROS_ENV_TMP}"
 echo "ros.domain-id=${ROS_DOMAIN_ID}" >> ${ROS_SNAP_ARGS_TMP}
 
 # Validate the ROS_NAMESPACE
@@ -145,7 +145,7 @@ validate_regex --allow-unset "ros.namespace" "^[a-z_][0-9a-z_]{0,19}$"
 ROS_NAMESPACE=$(snapctl get ros.namespace)
 
 if [ -n "$ROS_NAMESPACE" ]; then
-  echo "export ROS_NAMESPACE=${ROS_NAMESPACE}" >> "${ROS_ENV_TMP}"
+  printf 'export ROS_NAMESPACE=%q\n' "${ROS_NAMESPACE}" >> "${ROS_ENV_TMP}"
   echo "ros.namespace=${ROS_NAMESPACE}" >> ${ROS_SNAP_ARGS_TMP}
 else
   echo "unset ROS_NAMESPACE" >> "${ROS_ENV_TMP}"
@@ -220,6 +220,14 @@ list_available() {
     fi
     log_and_echo "Legacy aliases (still accepted): udp, shm, udp-lo, udp-lo-cyclone"
 }
+
+# The profile name becomes a path that root later sources from ros.env, so only plain
+# file-name characters are allowed (also rules out '..' traversal out of rmw/).
+if ! [[ "$TRANSPORT_SETTING" =~ ^([a-z]+/)?[A-Za-z0-9_][A-Za-z0-9._-]*$ ]] || [[ "$TRANSPORT_SETTING" == *..* ]]; then
+    log_and_echo "'${TRANSPORT_SETTING}' is not a valid value for 'ros.transport': use <kind>/<name> with letters, digits, '.', '_' or '-'."
+    list_available
+    exit 1
+fi
 
 # Zenoh is gated behind HSC_ALLOW_ZENOH=1. Snaps that pair zenoh-aware
 # rclcpp nodes with a non-zenoh-aware bridge (e.g. micro_ros_agent, which
@@ -358,7 +366,7 @@ case "$PROFILE_KIND" in
         echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_TMP}"
         echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_TMP}"
         if [ -n "$PROFILE" ]; then
-            echo "export FASTRTPS_DEFAULT_PROFILES_FILE=${PROFILE}" >> "${ROS_ENV_TMP}"
+            printf 'export FASTRTPS_DEFAULT_PROFILES_FILE=%q\n' "${PROFILE}" >> "${ROS_ENV_TMP}"
         else
             echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_TMP}"
         fi
@@ -369,7 +377,7 @@ case "$PROFILE_KIND" in
         echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_TMP}"
         echo "unset ZENOH_ROUTER_CHECK_ATTEMPTS" >> "${ROS_ENV_TMP}"
         if [ -n "$PROFILE" ]; then
-            echo "export CYCLONEDDS_URI=file://${PROFILE}" >> "${ROS_ENV_TMP}"
+            printf 'export CYCLONEDDS_URI=%q\n' "file://${PROFILE}" >> "${ROS_ENV_TMP}"
         else
             echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_TMP}"
         fi
@@ -382,10 +390,10 @@ case "$PROFILE_KIND" in
         echo "unset FASTRTPS_DEFAULT_PROFILES_FILE" >> "${ROS_ENV_TMP}"
         echo "unset CYCLONEDDS_URI" >> "${ROS_ENV_TMP}"
         if [ -n "$PROFILE" ]; then
-            echo "export ZENOH_SESSION_CONFIG_URI=${PROFILE}" >> "${ROS_ENV_TMP}"
+            printf 'export ZENOH_SESSION_CONFIG_URI=%q\n' "${PROFILE}" >> "${ROS_ENV_TMP}"
             router_profile="${SNAP_COMMON}/rmw/zenoh-router/$(basename "$PROFILE" .json5)-router.json5"
             if [ -f "$router_profile" ]; then
-                echo "export ZENOH_ROUTER_CONFIG_URI=${router_profile}" >> "${ROS_ENV_TMP}"
+                printf 'export ZENOH_ROUTER_CONFIG_URI=%q\n' "${router_profile}" >> "${ROS_ENV_TMP}"
             else
                 echo "unset ZENOH_ROUTER_CONFIG_URI" >> "${ROS_ENV_TMP}"
             fi
