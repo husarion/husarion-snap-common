@@ -551,9 +551,24 @@ source_ros() {
     fi
 }
 
+# sha256 of shipped defaults that a later release replaced. A file still
+# byte-identical to one was never edited, so a refresh may upgrade it.
+# fastdds/udp.xml, fastdds/udp-lo.xml before 0.16.0 (no socket buffer sizes).
+RETIRED_RMW_DEFAULTS="
+42b748f20845be704ac2ac0a8ed56b54dc53cea87b1c9bcde4b3cdcfc32cc514
+e605f96a8bf6129218327abcd7151bfaa61fb3edb53576a20f49ae06e2e24cc9
+"
+
+is_retired_rmw_default() {
+    local sum
+    sum=$(sha256sum "$1" 2>/dev/null | cut -d' ' -f1)
+    [ -n "$sum" ] && printf '%s\n' "$RETIRED_RMW_DEFAULTS" | grep -qx "$sum"
+}
+
 # Seed ${SNAP_COMMON}/rmw/ from the snap's factory snapshot. Idempotent.
 # --force overwrites (install); default copies only missing files so
-# operator edits survive (configure, on every refresh).
+# operator edits survive (configure, on every refresh), and upgrades files
+# that are still an unedited retired default.
 seed_rmw_tree() {
     local force=0
     [ "${1:-}" = "--force" ] && force=1
@@ -570,7 +585,8 @@ seed_rmw_tree() {
         for f in "${src}/${sub}"/*; do
             [ -e "$f" ] || continue
             name=$(basename "$f")
-            if [ "$force" = "1" ] || [ ! -e "${dst}/${sub}/${name}" ]; then
+            if [ "$force" = "1" ] || [ ! -e "${dst}/${sub}/${name}" ] \
+                || is_retired_rmw_default "${dst}/${sub}/${name}"; then
                 cp -f "$f" "${dst}/${sub}/${name}"
             fi
         done
