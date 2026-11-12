@@ -26,6 +26,7 @@ Add this to `parts`:
       'local-ros/rmw/cyclonedds/*.xml': usr/share/husarion-snap-common/config/rmw/cyclonedds/
       'local-ros/rmw/zenoh/*.json5': usr/share/husarion-snap-common/config/rmw/zenoh/
       'local-ros/rmw/zenoh-router/*.json5': usr/share/husarion-snap-common/config/rmw/zenoh-router/
+      'local-ros/worlds/*.xml': usr/share/husarion-snap-common/config/worlds/  # only for the robot world (robot_world.sh)
       'local-ros/ros.env': usr/share/husarion-snap-common/config/
     override-build: |
       craftctl default

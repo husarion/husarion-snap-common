@@ -129,6 +129,15 @@ else
   fi
 fi
 
+# Consumers that run the robot world (robot_world.sh) opt in with HSC_ROBOT_WORLD=1:
+# LOCALHOST discovery would replace the Fast DDS profile with SHM + UDP on every interface.
+if [ "${HSC_ROBOT_WORLD:-0}" = "1" ]; then
+  if [ "${ROS_AUTOMATIC_DISCOVERY_RANGE,,}" = "localhost" ] || [ "$ROS_LOCALHOST_ONLY" = "1" ]; then
+    log_and_echo "ros.automatic-discovery-range=localhost and ros.localhost-only=1 are not allowed here: the robot's ROS transport is fixed."
+    exit 1
+  fi
+fi
+
 # Make sure ROS_DOMAIN_ID is valid
 SUPPORTED_RANGE=(0 232)
 validate_number "ros.domain-id" SUPPORTED_RANGE[@]
