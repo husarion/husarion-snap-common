@@ -79,7 +79,7 @@ hsc_validate_robot_world() {
 
 # Writes robot.env + fastdds.xml into ${SNAP_COMMON}/worlds and the bare
 # KEY=VALUE host env to ${SNAP_COMMON}/host-ros/ros.env. Idempotent, atomic per file.
-#   --shm=true   SHM + UDP loopback, FASTDDS_SHM_MODE and a fixed FASTDDS_HOST_ID
+#   --shm=true   SHM + UDP loopback and a fixed FASTDDS_HOST_ID
 #                for patched snap daemons (default)
 #   --shm=false  UDP loopback only
 # The host env carries no FASTDDS_* variables (stage 1: stock host).
@@ -124,7 +124,6 @@ render_robot_world() {
         echo "unset ZENOH_SESSION_CONFIG_URI ZENOH_ROUTER_CONFIG_URI ZENOH_ROUTER_CHECK_ATTEMPTS"
         printf 'export FASTRTPS_DEFAULT_PROFILES_FILE=%q\n' "$profile"
         if [ "$shm" = "true" ]; then
-            echo "export FASTDDS_SHM_MODE=0666"
             echo "export FASTDDS_HOST_ID=${host_id}"
         else
             echo "unset FASTDDS_SHM_MODE FASTDDS_HOST_ID"
