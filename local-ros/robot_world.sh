@@ -148,3 +148,23 @@ render_robot_world() {
     mv "$tmp_env" "${dir}/robot.env"
     mv "$tmp_host" "${SNAP_COMMON}/host-ros/ros.env"
 }
+
+# For a sensor snap: joins the robot world another snap rendered, mounted at
+# $1 (its worlds/ dir through a content plug). Writes ${SNAP_COMMON}/ros.env =
+# that robot.env with the profile path rewritten to the mount (the renderer's
+# /var/snap/<owner>/... path does not exist in this snap's mount namespace),
+# plus HSC_ROBOT_WORLD=1 for the launcher. Returns 1 when nothing is mounted.
+hsc_join_robot_world() {
+    local mount="$1"
+    [ -f "${mount}/robot.env" ] && [ -f "${mount}/fastdds.xml" ] || return 1
+
+    local tmp
+    tmp=$(mktemp "${SNAP_COMMON}/.ros.env.XXXXXX")
+    {
+        grep -v '^export FASTRTPS_DEFAULT_PROFILES_FILE=' "${mount}/robot.env"
+        printf 'export FASTRTPS_DEFAULT_PROFILES_FILE=%q\n' "${mount}/fastdds.xml"
+        echo "export HSC_ROBOT_WORLD=1"
+    } > "$tmp"
+    chmod 0644 "$tmp"
+    mv "$tmp" "${SNAP_COMMON}/ros.env"
+}
