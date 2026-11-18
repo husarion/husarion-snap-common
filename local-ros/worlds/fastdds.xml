@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Robot world: SHM + UDP on 127.0.0.1 only. NO_FILTER is required: with FILTER_DIFFERENT_HOST processes whose host ids differ never match. -->
+<!-- Robot world: UDP on 127.0.0.1 only. NO_FILTER (the Fast DDS default) is pinned so FILTER_DIFFERENT_HOST cannot drop participants whose host id differs. -->
 <profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
   <transport_descriptors>
     <transport_descriptor>
@@ -12,19 +12,12 @@
       <receiveBufferSize>4194304</receiveBufferSize>
       <maxInitialPeersRange>64</maxInitialPeersRange>
     </transport_descriptor>
-    <transport_descriptor>
-      <transport_id>robot_world_shm</transport_id>
-      <type>SHM</type>
-      <segment_size>33554432</segment_size>
-      <maxMessageSize>4194304</maxMessageSize>
-    </transport_descriptor>
   </transport_descriptors>
 
   <participant profile_name="robot_world" is_default_profile="true">
     <rtps>
       <useBuiltinTransports>false</useBuiltinTransports>
       <userTransports>
-        <transport_id>robot_world_shm</transport_id>
         <transport_id>robot_world_udp_lo</transport_id>
       </userTransports>
       <builtin>
